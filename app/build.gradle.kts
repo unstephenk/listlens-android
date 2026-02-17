@@ -38,6 +38,7 @@ android {
 
   buildFeatures {
     compose = true
+    buildConfig = true
   }
 
   // Compose compiler is provided via org.jetbrains.kotlin.plugin.compose

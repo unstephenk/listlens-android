@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -29,6 +31,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -93,6 +97,10 @@ fun ScanBooksScreen(
   // Lightweight status + overlay.
   val status = remember { mutableStateOf("Scanning barcode…") }
   val foundIsbn = remember { mutableStateOf<String?>(null) }
+
+  // Debug manual entry for deterministic testing on emulator.
+  val showDebugDialog = remember { mutableStateOf(false) }
+  val debugText = remember { mutableStateOf("9780143127741") }
 
   Scaffold(
     topBar = { TopAppBar(title = { Text("Scan") }) },
@@ -176,6 +184,16 @@ fun ScanBooksScreen(
       ) {
         Text(status.value)
         Text("Tip: Try the back cover barcode first. OCR will kick in if needed.")
+
+        if (BuildConfig.DEBUG) {
+          Button(
+            onClick = { showDebugDialog.value = true },
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text("Debug: Enter ISBN")
+          }
+        }
+
         Button(
           onClick = onBack,
           modifier = Modifier.fillMaxWidth(),
@@ -183,6 +201,47 @@ fun ScanBooksScreen(
           Text("Back")
         }
       }
+    }
+
+    if (BuildConfig.DEBUG && showDebugDialog.value) {
+      AlertDialog(
+        onDismissRequest = { showDebugDialog.value = false },
+        title = { Text("Enter ISBN") },
+        text = {
+          Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Paste ISBN-13 or ISBN-10. We'll validate + convert to ISBN-13.")
+            OutlinedTextField(
+              value = debugText.value,
+              onValueChange = { debugText.value = it },
+              singleLine = true,
+              label = { Text("ISBN") },
+              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
+        },
+        confirmButton = {
+          Button(
+            onClick = {
+              val isbn = extractIsbnFromAny(debugText.value)
+              if (isbn != null) {
+                showDebugDialog.value = false
+                if (!didEmit.value) {
+                  didEmit.value = true
+                  foundIsbn.value = isbn
+                  status.value = "ISBN found"
+                  haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                }
+              } else {
+                status.value = "Invalid ISBN"
+              }
+            },
+          ) { Text("Use") }
+        },
+        dismissButton = {
+          Button(onClick = { showDebugDialog.value = false }) { Text("Cancel") }
+        },
+      )
     }
   }
 }
