@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+*/build/
+
+# Android SDK / local config
+local.properties
+
+# JDK (do not commit)
+.jdk/
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+
+# Artifacts
+*.apk
+*.aab
+
+# Kotlin/Java
+*.class
