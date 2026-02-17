@@ -44,6 +44,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -89,8 +90,9 @@ fun ScanBooksScreen(
   val didEmit = remember { mutableStateOf(false) }
   val latestOnIsbnFound = rememberUpdatedState(onIsbnFound)
 
-  // Lightweight status for the user.
+  // Lightweight status + overlay.
   val status = remember { mutableStateOf("Scanning barcode…") }
+  val foundIsbn = remember { mutableStateOf<String?>(null) }
 
   Scaffold(
     topBar = { TopAppBar(title = { Text("Scan") }) },
@@ -128,14 +130,43 @@ fun ScanBooksScreen(
           }
         } else {
           CameraIsbnScanner(
+            paused = didEmit.value,
             onStatus = { status.value = it },
             onIsbn = { isbn ->
               if (didEmit.value) return@CameraIsbnScanner
               didEmit.value = true
+              foundIsbn.value = isbn
+              status.value = "ISBN found"
               haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-              latestOnIsbnFound.value(isbn)
             },
           )
+
+          // Overlay when found
+          foundIsbn.value?.let { isbn ->
+            Box(
+              modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0x99000000)),
+              contentAlignment = Alignment.Center,
+            ) {
+              Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+              ) {
+                Text("ISBN detected", color = Color.White)
+                Text(isbn, color = Color.White)
+                Text("Hold still…", color = Color.White)
+              }
+            }
+          }
+
+          LaunchedEffect(foundIsbn.value) {
+            val isbn = foundIsbn.value ?: return@LaunchedEffect
+            // Small pause so the user sees the result.
+            delay(1200)
+            latestOnIsbnFound.value(isbn)
+          }
         }
       }
 
@@ -230,6 +261,7 @@ private fun calcEan13CheckDigit(first12Digits: String): Int {
 @SuppressLint("UnsafeOptInUsageError")
 @Composable
 private fun CameraIsbnScanner(
+  paused: Boolean,
   onStatus: (String) -> Unit,
   onIsbn: (String) -> Unit,
 ) {
@@ -282,6 +314,11 @@ private fun CameraIsbnScanner(
               .build()
 
             analysis.setAnalyzer(analysisExecutor) { imageProxy ->
+              if (paused) {
+                imageProxy.close()
+                return@setAnalyzer
+              }
+
               val mediaImage = imageProxy.image
               if (mediaImage == null) {
                 imageProxy.close()
