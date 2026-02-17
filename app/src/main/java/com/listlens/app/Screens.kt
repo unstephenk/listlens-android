@@ -41,7 +41,15 @@ import com.google.mlkit.vision.barcode.Barcode
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 @Composable
 fun CategoryScreen(onBooks: () -> Unit) {
@@ -81,6 +89,9 @@ fun ScanBooksScreen(
   val didEmit = remember { mutableStateOf(false) }
   val latestOnIsbnFound = rememberUpdatedState(onIsbnFound)
 
+  // Lightweight status for the user.
+  val status = remember { mutableStateOf("Scanning barcode…") }
+
   Scaffold(
     topBar = { TopAppBar(title = { Text("Scan") }) },
   ) { padding ->
@@ -102,21 +113,27 @@ fun ScanBooksScreen(
         contentAlignment = Alignment.Center,
       ) {
         if (!hasPermission.value) {
-          Text(
-            text = "Camera permission is required to scan.",
-            color = Color.White,
+          Column(
             modifier = Modifier.padding(16.dp),
-          )
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+          ) {
+            Text(
+              text = "Camera permission is required to scan.",
+              color = Color.White,
+            )
+            Button(onClick = { requestPermission.launch(Manifest.permission.CAMERA) }) {
+              Text("Grant permission")
+            }
+          }
         } else {
-          CameraBarcodeScanner(
-            onBarcodeValue = { raw ->
-              if (didEmit.value) return@CameraBarcodeScanner
-              val isbn = raw?.let(::extractIsbn13)
-              if (isbn != null) {
-                didEmit.value = true
-                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                latestOnIsbnFound.value(isbn)
-              }
+          CameraIsbnScanner(
+            onStatus = { status.value = it },
+            onIsbn = { isbn ->
+              if (didEmit.value) return@CameraIsbnScanner
+              didEmit.value = true
+              haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+              latestOnIsbnFound.value(isbn)
             },
           )
         }
@@ -126,7 +143,8 @@ fun ScanBooksScreen(
         modifier = Modifier.fillMaxWidth().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
       ) {
-        Text("Tip: Point the camera at the barcode. We'll auto-detect ISBN.")
+        Text(status.value)
+        Text("Tip: Try the back cover barcode first. OCR will kick in if needed.")
         Button(
           onClick = onBack,
           modifier = Modifier.fillMaxWidth(),
@@ -138,11 +156,56 @@ fun ScanBooksScreen(
   }
 }
 
-private fun extractIsbn13(raw: String): String? {
+private fun extractIsbnFromAny(raw: String): String? {
+  // Pull out digits and try ISBN-13 first.
   val digits = raw.filter { it.isDigit() }
-  if (digits.length != 13) return null
-  if (!(digits.startsWith("978") || digits.startsWith("979"))) return null
-  return if (isValidEan13(digits)) digits else null
+  if (digits.length >= 13) {
+    // Scan windows of 13 digits (OCR sometimes includes extra digits).
+    for (i in 0..(digits.length - 13)) {
+      val candidate = digits.substring(i, i + 13)
+      if ((candidate.startsWith("978") || candidate.startsWith("979")) && isValidEan13(candidate)) return candidate
+    }
+  }
+  // Fallback: ISBN-10 → ISBN-13
+  if (digits.length >= 10) {
+    for (i in 0..(digits.length - 10)) {
+      val candidate10 = digits.substring(i, i + 10)
+      val converted = isbn10To13(candidate10)
+      if (converted != null) return converted
+    }
+  }
+  return null
+}
+
+private fun isbn10To13(isbn10: String): String? {
+  if (isbn10.length != 10) return null
+  val core = isbn10.substring(0, 9)
+  if (!core.all { it.isDigit() }) return null
+  val check10 = isbn10.last()
+  val check10Value = when {
+    check10.isDigit() -> check10.digitToInt()
+    check10 == 'X' || check10 == 'x' -> 10
+    else -> return null
+  }
+  if (check10Value != calcIsbn10Check(core)) return null
+
+  val base12 = "978$core"
+  val check13 = calcEan13CheckDigit(base12)
+  return base12 + check13
+}
+
+private fun calcIsbn10Check(core9: String): Int {
+  // Weighted sum 10..2
+  val sum = core9.mapIndexed { index, c ->
+    val weight = 10 - index
+    weight * c.digitToInt()
+  }.sum()
+  val r = 11 - (sum % 11)
+  return when (r) {
+    10 -> 10
+    11 -> 0
+    else -> r
+  }
 }
 
 private fun isValidEan13(digits: String): Boolean {
@@ -155,15 +218,27 @@ private fun isValidEan13(digits: String): Boolean {
   return check == digits.last().digitToInt()
 }
 
+private fun calcEan13CheckDigit(first12Digits: String): Int {
+  require(first12Digits.length == 12)
+  val sum = first12Digits.mapIndexed { index, c ->
+    val n = c.digitToInt()
+    if (index % 2 == 0) n else n * 3
+  }.sum()
+  return (10 - (sum % 10)) % 10
+}
+
 @SuppressLint("UnsafeOptInUsageError")
 @Composable
-private fun CameraBarcodeScanner(
-  onBarcodeValue: (String?) -> Unit,
+private fun CameraIsbnScanner(
+  onStatus: (String) -> Unit,
+  onIsbn: (String) -> Unit,
 ) {
   val lifecycleOwner = LocalLifecycleOwner.current
-  val latestOnBarcodeValue = rememberUpdatedState(onBarcodeValue)
+  val latestOnIsbn = rememberUpdatedState(onIsbn)
+  val latestOnStatus = rememberUpdatedState(onStatus)
 
-  val scanner = remember {
+  // Barcode scanner (fast path).
+  val barcodeScanner = remember {
     val options = BarcodeScannerOptions.Builder()
       .setBarcodeFormats(
         Barcode.FORMAT_EAN_13,
@@ -175,11 +250,16 @@ private fun CameraBarcodeScanner(
     BarcodeScanning.getClient(options)
   }
 
+  // OCR (fallback path).
+  val textRecognizer = remember { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
+
   val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
+  val frameCount = remember { AtomicInteger(0) }
 
   DisposableEffect(Unit) {
     onDispose {
-      scanner.close()
+      barcodeScanner.close()
+      textRecognizer.close()
       analysisExecutor.shutdown()
     }
   }
@@ -209,12 +289,43 @@ private fun CameraBarcodeScanner(
               }
 
               val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-              scanner.process(image)
+
+              // 1) Try barcode first.
+              barcodeScanner.process(image)
                 .addOnSuccessListener { barcodes ->
                   val raw = barcodes.firstOrNull()?.rawValue
-                  latestOnBarcodeValue.value(raw)
+                  val isbn = raw?.let(::extractIsbnFromAny)
+                  if (isbn != null) {
+                    latestOnStatus.value("Found ISBN via barcode")
+                    latestOnIsbn.value(isbn)
+                    imageProxy.close()
+                    return@addOnSuccessListener
+                  }
+
+                  // 2) OCR fallback periodically (keep it light).
+                  val n = frameCount.incrementAndGet()
+                  val doOcr = n % 12 == 0
+                  if (!doOcr) {
+                    latestOnStatus.value("Scanning barcode…")
+                    imageProxy.close()
+                    return@addOnSuccessListener
+                  }
+
+                  latestOnStatus.value("No barcode yet — trying OCR…")
+                  textRecognizer.process(image)
+                    .addOnSuccessListener { visionText ->
+                      val ocrText = visionText.text
+                      val ocrIsbn = extractIsbnFromAny(ocrText)
+                      if (ocrIsbn != null) {
+                        latestOnStatus.value("Found ISBN via OCR")
+                        latestOnIsbn.value(ocrIsbn)
+                      }
+                    }
+                    .addOnCompleteListener {
+                      imageProxy.close()
+                    }
                 }
-                .addOnCompleteListener {
+                .addOnFailureListener {
                   imageProxy.close()
                 }
             }
@@ -254,7 +365,28 @@ fun ConfirmPlaceholderScreen(
     ) {
       Text("Detected ISBN:")
       Text(isbn)
-      Text("TODO: ISBN-pure lookup → title/author/year/publisher/edition + confidence")
+      val state = remember { mutableStateOf<BookLookupState>(BookLookupState.Loading) }
+
+      LaunchedEffect(isbn) {
+        state.value = BookLookupState.Loading
+        state.value = try {
+          val book = OpenLibrary.lookupByIsbn(isbn)
+          if (book == null) BookLookupState.NotFound else BookLookupState.Found(book)
+        } catch (e: Exception) {
+          BookLookupState.Error(e.message ?: "Lookup failed")
+        }
+      }
+
+      when (val s = state.value) {
+        is BookLookupState.Loading -> Text("Looking up book info…")
+        is BookLookupState.NotFound -> Text("No Open Library match found (we can still continue).")
+        is BookLookupState.Error -> Text("Lookup error: ${s.message}")
+        is BookLookupState.Found -> {
+          Text("Title: ${s.book.title}")
+          s.book.publishDate?.let { Text("Published: $it") }
+          s.book.publishers?.takeIf { it.isNotEmpty() }?.let { Text("Publisher: ${it.first()}") }
+        }
+      }
 
       RowButtons(
         left = "Retake",
@@ -262,6 +394,61 @@ fun ConfirmPlaceholderScreen(
         onLeft = onBack,
         onRight = onAccept,
       )
+    }
+  }
+}
+
+sealed interface BookLookupState {
+  data object Loading : BookLookupState
+  data object NotFound : BookLookupState
+  data class Error(val message: String) : BookLookupState
+  data class Found(val book: BookInfo) : BookLookupState
+}
+
+data class BookInfo(
+  val title: String,
+  val publishDate: String?,
+  val publishers: List<String>?,
+)
+
+private object OpenLibrary {
+  suspend fun lookupByIsbn(isbn13: String): BookInfo? = withContext(Dispatchers.IO) {
+    val url = URL("https://openlibrary.org/isbn/$isbn13.json")
+    val conn = (url.openConnection() as HttpURLConnection).apply {
+      connectTimeout = 6000
+      readTimeout = 6000
+      requestMethod = "GET"
+      setRequestProperty("Accept", "application/json")
+      setRequestProperty("User-Agent", "ListLens/0.0.1")
+    }
+
+    try {
+      val code = conn.responseCode
+      if (code == 404) return@withContext null
+      if (code !in 200..299) throw IllegalStateException("HTTP $code")
+
+      val body = conn.inputStream.bufferedReader().use { it.readText() }
+      val json = JSONObject(body)
+
+      val title = json.optString("title").ifBlank { "(unknown title)" }
+      val publishDate = json.optString("publish_date").ifBlank { null }
+      val publishersJson = json.optJSONArray("publishers")
+      val publishers = publishersJson?.let { arr ->
+        buildList {
+          for (i in 0 until arr.length()) {
+            val p = arr.optString(i)
+            if (!p.isNullOrBlank()) add(p)
+          }
+        }
+      }
+
+      BookInfo(
+        title = title,
+        publishDate = publishDate,
+        publishers = publishers,
+      )
+    } finally {
+      conn.disconnect()
     }
   }
 }
