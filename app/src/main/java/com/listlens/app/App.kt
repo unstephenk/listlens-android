@@ -25,11 +25,10 @@ fun ListLensApp() {
           )
         }
         composable("scan/books") {
-          // Placeholder: next step is CameraX + ML Kit barcode scan.
-          ScanPlaceholderScreen(
-            title = "Books (ISBN-first)",
+          ScanBooksScreen(
+            title = "Books (auto-detect ISBN)",
             onBack = { nav.popBackStack() },
-            onFakeIsbn = { isbn -> nav.navigate("confirm/$isbn") },
+            onIsbnFound = { isbn -> nav.navigate("confirm/$isbn") },
           )
         }
         composable("confirm/{isbn}") { backStack ->
