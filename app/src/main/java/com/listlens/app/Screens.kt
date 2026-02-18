@@ -482,6 +482,18 @@ fun ConfirmPlaceholderScreen(
       modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+      val coverUrl = remember(isbn) { "https://covers.openlibrary.org/b/isbn/$isbn-L.jpg?default=false" }
+
+      // Best-effort cover art (Open Library). If there's no cover, Coil will just fail silently.
+      Image(
+        painter = rememberAsyncImagePainter(coverUrl),
+        contentDescription = "Book cover",
+        modifier = Modifier
+          .fillMaxWidth()
+          .background(Color(0xFF111111))
+          .padding(8.dp),
+      )
+
       Text("Detected ISBN:")
       Text(isbn)
       val state = remember { mutableStateOf<BookLookupState>(BookLookupState.Loading) }
