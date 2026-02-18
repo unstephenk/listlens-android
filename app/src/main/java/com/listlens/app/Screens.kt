@@ -7,6 +7,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -36,6 +38,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -51,8 +54,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -551,22 +558,186 @@ private object OpenLibrary {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PhotosPlaceholderScreen(onBack: () -> Unit) {
+fun PhotosScreen(
+  isbn: String,
+  onBack: () -> Unit,
+) {
+  val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
+
+  val hasPermission = remember { mutableStateOf(false) }
+  val requestPermission = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission(),
+    onResult = { granted -> hasPermission.value = granted },
+  )
+
+  LaunchedEffect(Unit) {
+    requestPermission.launch(Manifest.permission.CAMERA)
+  }
+
+  val photos = remember { mutableStateOf<List<File>>(emptyList()) }
+  val errorText = remember { mutableStateOf<String?>(null) }
+
   Scaffold(
     topBar = { TopAppBar(title = { Text("Photos") }) },
   ) { padding ->
     Column(
-      modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
-      verticalArrangement = Arrangement.spacedBy(16.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
+      modifier = Modifier.fillMaxSize().padding(padding),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-      Text("TODO: capture up to 5 photos total")
-      Text("Then: eBay OAuth → upload photos → create draft listing")
+      Text(
+        text = "ISBN: $isbn",
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+      )
 
-      Spacer(Modifier.weight(1f))
-      Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
-        Text("Back")
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .weight(1f)
+          .padding(horizontal = 16.dp)
+          .background(Color.Black),
+        contentAlignment = Alignment.Center,
+      ) {
+        if (!hasPermission.value) {
+          Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+          ) {
+            Text(
+              text = "Camera permission is required to take photos.",
+              color = Color.White,
+            )
+            Button(onClick = { requestPermission.launch(Manifest.permission.CAMERA) }) {
+              Text("Grant permission")
+            }
+          }
+        } else {
+          CameraPhotoCapture(
+            enabled = photos.value.size < 5,
+            onCaptured = { file ->
+              photos.value = photos.value + file
+              errorText.value = null
+            },
+            onError = { msg ->
+              errorText.value = msg
+            },
+          )
+        }
       }
+
+      Column(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        Text("Photos: ${photos.value.size}/5")
+        errorText.value?.let { Text("Error: $it") }
+
+        Button(
+          onClick = {
+            // TODO: next step is eBay OAuth + upload.
+          },
+          modifier = Modifier.fillMaxWidth(),
+          enabled = photos.value.isNotEmpty(),
+        ) {
+          Text("Continue")
+        }
+
+        Button(
+          onClick = onBack,
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Back")
+        }
+      }
+    }
+  }
+}
+
+@SuppressLint("UnsafeOptInUsageError")
+@Composable
+private fun CameraPhotoCapture(
+  enabled: Boolean,
+  onCaptured: (File) -> Unit,
+  onError: (String) -> Unit,
+) {
+  val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
+  val mainExecutor = remember { ContextCompat.getMainExecutor(context) }
+
+  val latestOnCaptured = rememberUpdatedState(onCaptured)
+  val latestOnError = rememberUpdatedState(onError)
+
+  val imageCaptureState = remember { mutableStateOf<ImageCapture?>(null) }
+
+  AndroidView(
+    modifier = Modifier.fillMaxSize(),
+    factory = { ctx ->
+      PreviewView(ctx).also { pv ->
+        pv.scaleType = PreviewView.ScaleType.FILL_CENTER
+
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+        cameraProviderFuture.addListener(
+          {
+            val cameraProvider = cameraProviderFuture.get()
+
+            val preview = Preview.Builder().build().also { it.setSurfaceProvider(pv.surfaceProvider) }
+
+            val imageCapture = ImageCapture.Builder()
+              .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+              .build()
+            imageCaptureState.value = imageCapture
+
+            try {
+              cameraProvider.unbindAll()
+              cameraProvider.bindToLifecycle(
+                lifecycleOwner,
+                CameraSelector.DEFAULT_BACK_CAMERA,
+                preview,
+                imageCapture,
+              )
+            } catch (e: Exception) {
+              latestOnError.value("Camera bind failed: ${e.message}")
+            }
+          },
+          mainExecutor,
+        )
+      }
+    },
+  )
+
+  // Floating capture button overlay
+  Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+    Button(
+      onClick = {
+        val imageCapture = imageCaptureState.value ?: return@Button
+        if (!enabled) return@Button
+
+        val dir = File(context.cacheDir, "photos").apply { mkdirs() }
+        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val file = File(dir, "IMG_$ts.jpg")
+
+        val output = ImageCapture.OutputFileOptions.Builder(file).build()
+        imageCapture.takePicture(
+          output,
+          mainExecutor,
+          object : ImageCapture.OnImageSavedCallback {
+            override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+              latestOnCaptured.value(file)
+            }
+
+            override fun onError(exception: ImageCaptureException) {
+              latestOnError.value("Capture failed: ${exception.message}")
+            }
+          },
+        )
+      },
+      enabled = enabled,
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(16.dp),
+    ) {
+      Text(if (enabled) "Take photo" else "Max photos reached")
     }
   }
 }
