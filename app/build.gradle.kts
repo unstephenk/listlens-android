@@ -16,6 +16,19 @@ android {
     versionName = "0.0.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // eBay OAuth (Sandbox) — NOTE: Client secret should not ship in APK; keep it in local gradle properties for dev.
+    buildConfigField("String", "EBAY_ENV", "\"sandbox\"")
+    buildConfigField("String", "EBAY_CLIENT_ID", "\"StephenK-ListLens-SBX-e4ed7534b-5a4f9db6\"")
+    buildConfigField("String", "EBAY_REDIRECT_RU_NAME", "\"Stephen_Kuehl-StephenK-ListLe-mzbyt\"")
+    buildConfigField(
+      "String",
+      "EBAY_SCOPES",
+      "\"https://api.ebay.com/oauth/api_scope/sell.inventory https://api.ebay.com/oauth/api_scope/sell.account https://api.ebay.com/oauth/api_scope/sell.item.draft\"",
+    )
+
+    val ebaySecret = providers.gradleProperty("EBAY_CLIENT_SECRET").orNull
+    buildConfigField("String", "EBAY_CLIENT_SECRET", "\"${ebaySecret ?: \"\"}\"")
   }
 
   buildTypes {
@@ -40,6 +53,8 @@ android {
     compose = true
     buildConfig = true
   }
+
+
 
   // Compose compiler is provided via org.jetbrains.kotlin.plugin.compose
 
@@ -80,6 +95,12 @@ dependencies {
 
   // Coroutines
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+  // DataStore (token storage)
+  implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+  // Custom Tabs (OAuth)
+  implementation("androidx.browser:browser:1.8.0")
 
   debugImplementation("androidx.compose.ui:ui-tooling")
 

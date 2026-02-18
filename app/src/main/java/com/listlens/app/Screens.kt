@@ -73,7 +73,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 @Composable
-fun CategoryScreen(onBooks: () -> Unit) {
+fun CategoryScreen(
+  onBooks: () -> Unit,
+  onEbaySignIn: () -> Unit,
+) {
   Column(
     modifier = Modifier.fillMaxSize().padding(16.dp),
     verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -83,6 +86,12 @@ fun CategoryScreen(onBooks: () -> Unit) {
 
     Button(onClick = onBooks, modifier = Modifier.fillMaxWidth()) {
       Text("Books")
+    }
+
+    Spacer(Modifier.weight(1f))
+
+    Button(onClick = onEbaySignIn, modifier = Modifier.fillMaxWidth()) {
+      Text("Sign in to eBay (Sandbox)")
     }
   }
 }
