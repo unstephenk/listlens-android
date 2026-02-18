@@ -24,8 +24,8 @@ function Get-Adb() {
 
 $adb = Get-Adb
 
-function ADB([string[]]$Args) {
-  & $adb @Args
+function ADB([string[]]$AdbArgs) {
+  & $adb @AdbArgs
 }
 
 function Dump-UiXml() {
@@ -80,7 +80,7 @@ function Wait-ForText([string]$text, [int]$timeoutSec = 15) {
 
 # --- Start ---
 Write-Output "SERIAL=$Serial"
-ADB @("devices", "-l")
+ADB "devices" "-l"
 
 if (![string]::IsNullOrWhiteSpace($ApkPath)) {
   if (!(Test-Path $ApkPath)) {
