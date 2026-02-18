@@ -12,6 +12,7 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,9 +21,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -43,6 +51,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import coil.compose.rememberAsyncImagePainter
 import androidx.core.content.ContextCompat
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -582,8 +591,18 @@ fun PhotosScreen(
     requestPermission.launch(Manifest.permission.CAMERA)
   }
 
+  val photosDir = remember(isbn) { File(context.filesDir, "photos/$isbn").apply { mkdirs() } }
   val photos = remember { mutableStateOf<List<File>>(emptyList()) }
   val errorText = remember { mutableStateOf<String?>(null) }
+
+  LaunchedEffect(photosDir) {
+    // Load any existing photos for this ISBN.
+    photos.value = photosDir
+      .listFiles()
+      ?.filter { it.isFile }
+      ?.sortedBy { it.name }
+      ?: emptyList()
+  }
 
   Scaffold(
     topBar = { TopAppBar(title = { Text("Photos") }) },
@@ -622,8 +641,9 @@ fun PhotosScreen(
         } else {
           CameraPhotoCapture(
             enabled = photos.value.size < 5,
+            outputDir = photosDir,
             onCaptured = { file ->
-              photos.value = photos.value + file
+              photos.value = (photos.value + file).distinctBy { it.absolutePath }
               errorText.value = null
             },
             onError = { msg ->
@@ -639,6 +659,44 @@ fun PhotosScreen(
       ) {
         Text("Photos: ${photos.value.size}/5")
         errorText.value?.let { Text("Error: $it") }
+
+        if (photos.value.isNotEmpty()) {
+          LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            items(photos.value, key = { it.absolutePath }) { file ->
+              Box {
+                Image(
+                  painter = rememberAsyncImagePainter(file),
+                  contentDescription = "photo",
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.DarkGray),
+                )
+                IconButton(
+                  onClick = {
+                    runCatching { file.delete() }
+                    photos.value = photosDir
+                      .listFiles()
+                      ?.filter { it.isFile }
+                      ?.sortedBy { it.name }
+                      ?: emptyList()
+                  },
+                  modifier = Modifier.align(Alignment.TopEnd),
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Delete",
+                    tint = Color.White,
+                  )
+                }
+              }
+            }
+          }
+        }
 
         Button(
           onClick = {
@@ -665,6 +723,7 @@ fun PhotosScreen(
 @Composable
 private fun CameraPhotoCapture(
   enabled: Boolean,
+  outputDir: File,
   onCaptured: (File) -> Unit,
   onError: (String) -> Unit,
 ) {
@@ -720,9 +779,8 @@ private fun CameraPhotoCapture(
         val imageCapture = imageCaptureState.value ?: return@Button
         if (!enabled) return@Button
 
-        val dir = File(context.cacheDir, "photos").apply { mkdirs() }
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val file = File(dir, "IMG_$ts.jpg")
+        val file = File(outputDir, "IMG_$ts.jpg")
 
         val output = ImageCapture.OutputFileOptions.Builder(file).build()
         imageCapture.takePicture(

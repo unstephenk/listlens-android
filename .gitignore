@@ -22,3 +22,6 @@ local.properties
 
 # Kotlin/Java
 *.class
+
+# Local Kotlin tooling cache
+.kotlin/
