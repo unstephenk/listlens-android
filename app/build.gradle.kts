@@ -28,7 +28,8 @@ android {
     )
 
     val ebaySecret = providers.gradleProperty("EBAY_CLIENT_SECRET").orNull
-    buildConfigField("String", "EBAY_CLIENT_SECRET", "\"${ebaySecret ?: \"\"}\"")
+    val safeSecret = ebaySecret ?: ""
+    buildConfigField("String", "EBAY_CLIENT_SECRET", "\"$safeSecret\"")
   }
 
   buildTypes {
@@ -60,7 +61,7 @@ android {
 
   packaging {
     resources {
-      excludes += "/META-INF/{AL2.0,LGPL2.1}"
+      excludes.add("/META-INF/{AL2.0,LGPL2.1}")
     }
   }
 }

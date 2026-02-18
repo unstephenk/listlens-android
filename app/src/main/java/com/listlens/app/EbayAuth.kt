@@ -8,9 +8,6 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
-import androidx.datastore.preferences.core.preferencesKey
-import androidx.datastore.preferences.core.preferencesOf
-import androidx.datastore.preferences.core.preferencesSetKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -120,8 +117,8 @@ object EbayAuth {
 
   suspend fun exchangeCodeForToken(context: Context, code: String): Result<Unit> {
     // Pull verifier/state from stored prefs.
-    val prefs = kotlinx.coroutines.flow.first(context.ebayDataStore.data)
-    val codeVerifier = prefs[KEY_LAST_CODE_VERIFIER]
+    val prefs = context.ebayDataStore.data.first()
+    val codeVerifier = prefs[KEY_LAST_CODE_VERIFIER] ?: ""
     if (codeVerifier.isNullOrBlank()) return Result.failure(IllegalStateException("Missing PKCE verifier; start sign-in again."))
 
     // eBay typically requires Basic auth with client_id:client_secret for token exchange.
