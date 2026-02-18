@@ -34,7 +34,7 @@ function Dump-UiXml() {
 }
 
 function Find-BoundsCenter([string]$xml, [string]$text) {
-  $pattern = "text=\"" + [regex]::Escape($text) + "\"[^>]*bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\""
+  $pattern = 'text="' + [regex]::Escape($text) + '"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
   $m = [regex]::Match($xml, $pattern)
   if (!$m.Success) {
     return $null
