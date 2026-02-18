@@ -194,7 +194,11 @@ fun ScanBooksScreen(
 
         if (BuildConfig.DEBUG) {
           Button(
-            onClick = { showDebugDialog.value = true },
+            onClick = {
+              // Reset to a known-good value each time for deterministic testing.
+              debugText.value = "9780143127741"
+              showDebugDialog.value = true
+            },
             modifier = Modifier.fillMaxWidth(),
           ) {
             Text("Debug: Enter ISBN")
@@ -246,7 +250,10 @@ fun ScanBooksScreen(
           ) { Text("Use") }
         },
         dismissButton = {
-          Button(onClick = { showDebugDialog.value = false }) { Text("Cancel") }
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { debugText.value = "" }) { Text("Clear") }
+            Button(onClick = { showDebugDialog.value = false }) { Text("Cancel") }
+          }
         },
       )
     }
