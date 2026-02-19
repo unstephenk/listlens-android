@@ -17,19 +17,7 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-    // eBay OAuth (Sandbox) — NOTE: Client secret should not ship in APK; keep it in local gradle properties for dev.
-    buildConfigField("String", "EBAY_ENV", "\"sandbox\"")
-    buildConfigField("String", "EBAY_CLIENT_ID", "\"StephenK-ListLens-SBX-e4ed7534b-5a4f9db6\"")
-    buildConfigField("String", "EBAY_REDIRECT_RU_NAME", "\"Stephen_Kuehl-StephenK-ListLe-mzbyt\"")
-    buildConfigField(
-      "String",
-      "EBAY_SCOPES",
-      "\"https://api.ebay.com/oauth/api_scope/sell.inventory https://api.ebay.com/oauth/api_scope/sell.account https://api.ebay.com/oauth/api_scope/sell.item.draft\"",
-    )
-
-    val ebaySecret = providers.gradleProperty("EBAY_CLIENT_SECRET").orNull
-    val safeSecret = ebaySecret ?: ""
-    buildConfigField("String", "EBAY_CLIENT_SECRET", "\"$safeSecret\"")
+    // eBay integration deferred for now.
   }
 
   buildTypes {
