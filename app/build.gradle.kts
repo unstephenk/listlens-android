@@ -17,7 +17,18 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-    // eBay integration deferred for now.
+    // theark server (for server-mediated OAuth)
+    buildConfigField("String", "THEARK_BASE_URL", "\"https://theark.io\"")
+
+    // eBay OAuth (server-mediated; client secret stays on server)
+    buildConfigField("String", "EBAY_ENV", "\"sandbox\"")
+    buildConfigField("String", "EBAY_CLIENT_ID", "\"StephenK-ListLens-SBX-e4ed7534b-5a4f9db6\"")
+    buildConfigField("String", "EBAY_REDIRECT_RU_NAME", "\"Stephen_Kuehl-StephenK-ListLe-mzbyt\"")
+    buildConfigField(
+      "String",
+      "EBAY_SCOPES",
+      "\"https://api.ebay.com/oauth/api_scope/sell.inventory https://api.ebay.com/oauth/api_scope/sell.account https://api.ebay.com/oauth/api_scope/sell.item.draft\"",
+    )
   }
 
   buildTypes {

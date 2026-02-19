@@ -82,6 +82,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @Composable
 fun CategoryScreen(
   onBooks: () -> Unit,
+  onEbaySignIn: () -> Unit,
 ) {
   Column(
     modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -95,6 +96,10 @@ fun CategoryScreen(
     }
 
     Spacer(Modifier.weight(1f))
+
+    Button(onClick = onEbaySignIn, modifier = Modifier.fillMaxWidth()) {
+      Text("Sign in to eBay (via theark.io)")
+    }
 
     Text("Export: after photos, you’ll share a listing package (JSON + images).")
   }

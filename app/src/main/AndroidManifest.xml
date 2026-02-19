@@ -27,7 +27,16 @@
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
 
-      <!-- eBay OAuth redirect removed (integration deferred). -->
+      <!-- eBay App Link handoff (server redirects here after OAuth completes). -->
+      <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data
+          android:scheme="https"
+          android:host="theark.io"
+          android:pathPrefix="/ebay/app" />
+      </intent-filter>
     </activity>
 
   </application>

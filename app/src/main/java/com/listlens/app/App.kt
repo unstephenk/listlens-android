@@ -2,7 +2,9 @@ package com.listlens.app
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -14,6 +16,16 @@ fun ListLensApp() {
     val nav = rememberNavController()
 
     Scaffold { _ ->
+      // Handle app-link handoff from theark.io.
+      val pendingLink = DeepLinks.latest.value
+      LaunchedEffect(pendingLink) {
+        val uri = DeepLinks.consume() ?: return@LaunchedEffect
+        if (uri.host == "theark.io" && uri.path?.startsWith("/ebay/app") == true) {
+          val encoded = Uri.encode(uri.toString())
+          nav.navigate("ebay-handoff?uri=$encoded")
+        }
+      }
+
       NavHost(
         navController = nav,
         startDestination = "category",
@@ -22,9 +34,22 @@ fun ListLensApp() {
         composable("category") {
           CategoryScreen(
             onBooks = { nav.navigate("scan/books") },
+            onEbaySignIn = { nav.navigate("ebay") },
           )
         }
-        // eBay integration deferred for now.
+        composable("ebay") {
+          EbayHomeScreen(
+            onBack = { nav.popBackStack() },
+          )
+        }
+        composable("ebay-handoff?uri={uri}") { backStack ->
+          val raw = backStack.arguments?.getString("uri") ?: ""
+          EbayHandoffScreen(
+            uriString = Uri.decode(raw),
+            onDone = { nav.popBackStack("category", inclusive = false) },
+          )
+        }
+
         composable("scan/books") {
           ScanBooksScreen(
             title = "Books (auto-detect ISBN)",
