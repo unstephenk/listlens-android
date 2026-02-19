@@ -34,9 +34,9 @@ fun ListLensApp() {
         composable("category") {
           CategoryScreen(
             onBooks = { nav.navigate("scan/books") },
-            onEbaySignIn = { nav.navigate("ebay") },
           )
         }
+        // eBay flows are intentionally kept in code for later, but UI is deferred for now.
         composable("ebay") {
           EbayHomeScreen(
             onBack = { nav.popBackStack() },
@@ -69,6 +69,15 @@ fun ListLensApp() {
           PhotosScreen(
             isbn = isbn,
             onBack = { nav.popBackStack() },
+            onContinue = { nav.navigate("package/$isbn") },
+          )
+        }
+        composable("package/{isbn}") { backStack ->
+          val isbn = backStack.arguments?.getString("isbn") ?: ""
+          PackageScreen(
+            isbn = isbn,
+            onBack = { nav.popBackStack() },
+            onDone = { nav.popBackStack("category", inclusive = false) },
           )
         }
       }

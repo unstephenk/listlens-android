@@ -2,6 +2,8 @@ package com.listlens.app
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
+import android.net.Uri
 import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,8 +28,11 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,8 +56,9 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import coil.compose.rememberAsyncImagePainter
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import coil.compose.rememberAsyncImagePainter
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -62,6 +68,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
@@ -75,7 +82,6 @@ import java.util.concurrent.atomic.AtomicInteger
 @Composable
 fun CategoryScreen(
   onBooks: () -> Unit,
-  onEbaySignIn: () -> Unit,
 ) {
   Column(
     modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -90,9 +96,7 @@ fun CategoryScreen(
 
     Spacer(Modifier.weight(1f))
 
-    Button(onClick = onEbaySignIn, modifier = Modifier.fillMaxWidth()) {
-      Text("Sign in to eBay (Sandbox)")
-    }
+    Text("Export: after photos, you’ll share a listing package (JSON + images).")
   }
 }
 
@@ -491,7 +495,7 @@ fun ConfirmPlaceholderScreen(
       modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-      val coverUrl = remember(isbn) { "https://covers.openlibrary.org/b/isbn/$isbn-L.jpg?default=false" }
+      val coverUrl = remember(isbn) { OpenLibrary.coverUrl(isbn, size = "L") }
 
       // Best-effort cover art (Open Library). If there's no cover, Coil will just fail silently.
       Image(
@@ -591,6 +595,9 @@ private object OpenLibrary {
       conn.disconnect()
     }
   }
+
+  fun coverUrl(isbn13: String, size: String = "L"): String =
+    "https://covers.openlibrary.org/b/isbn/$isbn13-$size.jpg?default=false"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -598,9 +605,9 @@ private object OpenLibrary {
 fun PhotosScreen(
   isbn: String,
   onBack: () -> Unit,
+  onContinue: () -> Unit,
 ) {
   val context = LocalContext.current
-  val lifecycleOwner = LocalLifecycleOwner.current
 
   val hasPermission = remember { mutableStateOf(false) }
   val requestPermission = rememberLauncherForActivityResult(
@@ -720,9 +727,7 @@ fun PhotosScreen(
         }
 
         Button(
-          onClick = {
-            // TODO: next step is eBay OAuth + upload.
-          },
+          onClick = onContinue,
           modifier = Modifier.fillMaxWidth(),
           enabled = photos.value.isNotEmpty(),
         ) {
@@ -736,6 +741,175 @@ fun PhotosScreen(
           Text("Back")
         }
       }
+    }
+  }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PackageScreen(
+  isbn: String,
+  onBack: () -> Unit,
+  onDone: () -> Unit,
+) {
+  val context = LocalContext.current
+
+  val state = remember { mutableStateOf<BookLookupState>(BookLookupState.Loading) }
+  LaunchedEffect(isbn) {
+    state.value = BookLookupState.Loading
+    state.value = try {
+      val book = OpenLibrary.lookupByIsbn(isbn)
+      if (book == null) BookLookupState.NotFound else BookLookupState.Found(book)
+    } catch (e: Exception) {
+      BookLookupState.Error(e.message ?: "Lookup failed")
+    }
+  }
+
+  val conditionOptions = listOf(
+    "Like New",
+    "Very Good",
+    "Good",
+    "Acceptable",
+    "Poor",
+  )
+  val condition = remember { mutableStateOf(conditionOptions.first()) }
+  val conditionMenuOpen = remember { mutableStateOf(false) }
+  val notes = remember { mutableStateOf("") }
+
+  val lastExportPath = remember { mutableStateOf<String?>(null) }
+  val error = remember { mutableStateOf<String?>(null) }
+
+  // Read photos from the per-ISBN directory.
+  val photosDir = remember(isbn) { File(context.filesDir, "photos/$isbn").apply { mkdirs() } }
+  val photos = remember { mutableStateOf<List<File>>(emptyList()) }
+  LaunchedEffect(photosDir) {
+    photos.value = photosDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name } ?: emptyList()
+  }
+
+  Scaffold(
+    topBar = { TopAppBar(title = { Text("Export") }) },
+  ) { padding ->
+    Column(
+      modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      Text("ISBN: $isbn")
+
+      when (val s = state.value) {
+        is BookLookupState.Loading -> Text("Looking up book info…")
+        is BookLookupState.NotFound -> Text("No Open Library match found (export will still work).")
+        is BookLookupState.Error -> Text("Lookup error: ${s.message}")
+        is BookLookupState.Found -> {
+          Text("Title: ${s.book.title}")
+          s.book.publishDate?.let { Text("Published: $it") }
+          s.book.publishers?.firstOrNull()?.let { Text("Publisher: $it") }
+        }
+      }
+
+      // Condition picker
+      Box {
+        OutlinedTextField(
+          value = condition.value,
+          onValueChange = { },
+          readOnly = true,
+          label = { Text("Condition") },
+          trailingIcon = {
+            IconButton(onClick = { conditionMenuOpen.value = true }) {
+              Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Pick")
+            }
+          },
+          modifier = Modifier.fillMaxWidth(),
+        )
+        DropdownMenu(
+          expanded = conditionMenuOpen.value,
+          onDismissRequest = { conditionMenuOpen.value = false },
+        ) {
+          conditionOptions.forEach { opt ->
+            DropdownMenuItem(
+              text = { Text(opt) },
+              onClick = {
+                condition.value = opt
+                conditionMenuOpen.value = false
+              },
+            )
+          }
+        }
+      }
+
+      OutlinedTextField(
+        value = notes.value,
+        onValueChange = { notes.value = it },
+        label = { Text("Notes") },
+        modifier = Modifier.fillMaxWidth(),
+      )
+
+      Text("Photos included: ${photos.value.size}")
+
+      error.value?.let { Text("Error: $it") }
+      lastExportPath.value?.let { Text("Last export: $it") }
+
+      Button(
+        modifier = Modifier.fillMaxWidth(),
+        enabled = photos.value.isNotEmpty(),
+        onClick = {
+          error.value = null
+          try {
+            val exportDir = File(context.cacheDir, "exports/$isbn/${System.currentTimeMillis()}").apply { mkdirs() }
+
+            // Copy photos
+            val copied = photos.value.mapIndexed { index, src ->
+              val ext = src.extension.ifBlank { "jpg" }
+              val dst = File(exportDir, String.format(Locale.US, "photo_%02d.%s", index + 1, ext))
+              src.copyTo(dst, overwrite = true)
+              dst
+            }
+
+            val book = (state.value as? BookLookupState.Found)?.book
+            val json = JSONObject().apply {
+              put("schemaVersion", 1)
+              put("createdAtMs", System.currentTimeMillis())
+              put("isbn13", isbn)
+              put("title", book?.title)
+              put("publishDate", book?.publishDate)
+              put("publishers", book?.publishers?.let { JSONArray(it) })
+              put("condition", condition.value)
+              put("notes", notes.value)
+              put("coverUrl", OpenLibrary.coverUrl(isbn, size = "L"))
+              put(
+                "photos",
+                JSONArray(copied.map { it.name }),
+              )
+            }
+            val jsonFile = File(exportDir, "listing.json")
+            jsonFile.writeText(json.toString(2))
+
+            val authority = context.packageName + ".fileprovider"
+            val uris = (listOf(jsonFile) + copied).map { file ->
+              FileProvider.getUriForFile(context, authority, file)
+            }
+
+            val shareIntent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+              type = "application/octet-stream"
+              putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            context.startActivity(Intent.createChooser(shareIntent, "Share listing package"))
+            lastExportPath.value = exportDir.absolutePath
+          } catch (e: Exception) {
+            error.value = e.message ?: "Export failed"
+          }
+        },
+      ) {
+        Text("Share listing package")
+      }
+
+      RowButtons(
+        left = "Back",
+        right = "Done",
+        onLeft = onBack,
+        onRight = onDone,
+      )
     }
   }
 }

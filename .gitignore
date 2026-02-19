@@ -1,27 +1,12 @@
+# Android Studio local settings
+.jdk/
+.sdk/
+
 # Gradle
 .gradle/
-build/
-*/build/
-
-# Android SDK / local config
 local.properties
 
-# JDK (do not commit)
-.jdk/
-
-# IDE
-.idea/
-*.iml
-
-# OS
-.DS_Store
-
-# Artifacts
+# Build outputs
+**/build/
 *.apk
 *.aab
-
-# Kotlin/Java
-*.class
-
-# Local Kotlin tooling cache
-.kotlin/
