@@ -628,13 +628,65 @@ fun PhotosScreen(
   val photos = remember { mutableStateOf<List<File>>(emptyList()) }
   val errorText = remember { mutableStateOf<String?>(null) }
 
-  LaunchedEffect(photosDir) {
+  fun reloadPhotos() {
     // Load any existing photos for this ISBN.
     photos.value = photosDir
       .listFiles()
       ?.filter { it.isFile }
       ?.sortedBy { it.name }
       ?: emptyList()
+  }
+
+  fun normalizePhotoNames() {
+    // Keep deterministic ordering + stable filenames so reorder is easy.
+    // photo_01.jpg ... photo_05.jpg
+    val current = photosDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name } ?: emptyList()
+    if (current.isEmpty()) return
+
+    // First rename to temp to avoid collisions.
+    val temp = current.mapIndexed { i, f ->
+      val ext = f.extension.ifBlank { "jpg" }
+      val tmp = File(photosDir, "tmp_${System.currentTimeMillis()}_${i}.$ext")
+      f.renameTo(tmp)
+      tmp
+    }
+
+    temp.sortedBy { it.name }.forEachIndexed { idx, f ->
+      val ext = f.extension.ifBlank { "jpg" }
+      val finalName = String.format(Locale.US, "photo_%02d.%s", idx + 1, ext)
+      val dst = File(photosDir, finalName)
+      f.renameTo(dst)
+    }
+  }
+
+  fun movePhoto(index: Int, delta: Int) {
+    val list = photos.value
+    val newIndex = index + delta
+    if (index !in list.indices) return
+    if (newIndex !in list.indices) return
+
+    // Ensure names are normalized first so swap is clean.
+    normalizePhotoNames()
+    reloadPhotos()
+
+    val updated = photos.value
+    if (updated.size < 2) return
+    val a = updated[index]
+    val b = updated[newIndex]
+
+    // swap using temp name
+    val tmp = File(photosDir, "swap_${System.currentTimeMillis()}.${a.extension.ifBlank { "jpg" }}")
+    a.renameTo(tmp)
+    b.renameTo(a)
+    tmp.renameTo(b)
+
+    normalizePhotoNames()
+    reloadPhotos()
+  }
+
+  LaunchedEffect(photosDir) {
+    normalizePhotoNames()
+    reloadPhotos()
   }
 
   Scaffold(
@@ -676,7 +728,13 @@ fun PhotosScreen(
             enabled = photos.value.size < 5,
             outputDir = photosDir,
             onCaptured = { file ->
-              photos.value = (photos.value + file).distinctBy { it.absolutePath }
+              // After capture, normalize filenames so ordering stays stable.
+              runCatching { normalizePhotoNames() }
+              reloadPhotos()
+              // In case rename failed, still append the new file.
+              if (photos.value.none { it.absolutePath == file.absolutePath }) {
+                photos.value = (photos.value + file).distinctBy { it.absolutePath }
+              }
               errorText.value = null
             },
             onError = { msg ->
@@ -700,7 +758,9 @@ fun PhotosScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth(),
           ) {
-            items(photos.value, key = { it.absolutePath }) { file ->
+            items(photos.value.withIndex().toList(), key = { it.value.absolutePath }) { indexed ->
+              val idx = indexed.index
+              val file = indexed.value
               Box {
                 Image(
                   painter = rememberAsyncImagePainter(file),
@@ -709,14 +769,37 @@ fun PhotosScreen(
                     .fillMaxWidth()
                     .background(Color.DarkGray),
                 )
+
+                // Simple reorder controls (tap up/down). This is less fancy than drag & drop,
+                // but it’s deterministic and works great on-device.
+                Column(
+                  modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
+                  verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                  Text(
+                    text = "${idx + 1}",
+                    color = Color.White,
+                    modifier = Modifier
+                      .background(Color(0x88000000))
+                      .padding(horizontal = 6.dp, vertical = 2.dp),
+                  )
+
+                  Button(
+                    onClick = { movePhoto(idx, -1) },
+                    enabled = idx > 0,
+                  ) { Text("Up") }
+
+                  Button(
+                    onClick = { movePhoto(idx, +1) },
+                    enabled = idx < photos.value.lastIndex,
+                  ) { Text("Down") }
+                }
+
                 IconButton(
                   onClick = {
                     runCatching { file.delete() }
-                    photos.value = photosDir
-                      .listFiles()
-                      ?.filter { it.isFile }
-                      ?.sortedBy { it.name }
-                      ?: emptyList()
+                    runCatching { normalizePhotoNames() }
+                    reloadPhotos()
                   },
                   modifier = Modifier.align(Alignment.TopEnd),
                 ) {
