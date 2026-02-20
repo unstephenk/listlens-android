@@ -37,6 +37,17 @@
           android:host="theark.io"
           android:pathPrefix="/ebay/app" />
       </intent-filter>
+
+      <!-- Dev fallback: custom scheme deep link (no assetlinks verification required). -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data
+          android:scheme="listlens"
+          android:host="ebay"
+          android:pathPrefix="/app" />
+      </intent-filter>
     </activity>
 
   </application>

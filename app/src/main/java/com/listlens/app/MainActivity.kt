@@ -20,8 +20,13 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun handleAppLink(uri: Uri) {
-    // https://theark.io/ebay/app?sid=...
-    if (uri.host == "theark.io" && uri.path?.startsWith("/ebay/app") == true) {
+    // Handoff URL can arrive as either:
+    // - https://theark.io/ebay/app?sid=...   (Android App Links)
+    // - listlens://ebay/app?sid=...         (dev fallback, no verification)
+    val isHttpsAppLink = (uri.scheme == "https" && uri.host == "theark.io" && uri.path?.startsWith("/ebay/app") == true)
+    val isSchemeFallback = (uri.scheme == "listlens" && uri.host == "ebay" && uri.path?.startsWith("/app") == true)
+
+    if (isHttpsAppLink || isSchemeFallback) {
       DeepLinks.latest.value = uri
     }
   }

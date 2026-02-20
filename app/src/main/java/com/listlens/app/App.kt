@@ -16,11 +16,15 @@ fun ListLensApp() {
     val nav = rememberNavController()
 
     Scaffold { _ ->
-      // Handle app-link handoff from theark.io.
+      // Handle OAuth handoff deep link.
+      // - https://theark.io/ebay/app?sid=...   (Android App Links)
+      // - listlens://ebay/app?sid=...         (dev fallback, no verification)
       val pendingLink = DeepLinks.latest.value
       LaunchedEffect(pendingLink) {
         val uri = DeepLinks.consume() ?: return@LaunchedEffect
-        if (uri.host == "theark.io" && uri.path?.startsWith("/ebay/app") == true) {
+        val isHttpsAppLink = (uri.scheme == "https" && uri.host == "theark.io" && uri.path?.startsWith("/ebay/app") == true)
+        val isSchemeFallback = (uri.scheme == "listlens" && uri.host == "ebay" && uri.path?.startsWith("/app") == true)
+        if (isHttpsAppLink || isSchemeFallback) {
           val encoded = Uri.encode(uri.toString())
           nav.navigate("ebay-handoff?uri=$encoded")
         }
