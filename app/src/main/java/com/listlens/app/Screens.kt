@@ -80,6 +80,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -733,6 +735,20 @@ data class BookInfo(
   val publishers: List<String>?,
 )
 
+private fun zipDirectoryToFile(dir: File, zipFile: File) {
+  ZipOutputStream(zipFile.outputStream().buffered()).use { zos ->
+    val basePath = dir.absolutePath.trimEnd(File.separatorChar) + File.separator
+    val files = dir.walkTopDown().filter { it.isFile }.toList()
+    files.forEach { f ->
+      val relative = f.absolutePath.removePrefix(basePath).replace(File.separatorChar, '/')
+      val entry = ZipEntry(relative)
+      zos.putNextEntry(entry)
+      f.inputStream().use { it.copyTo(zos) }
+      zos.closeEntry()
+    }
+  }
+}
+
 private object OpenLibrary {
   suspend fun lookupByIsbn(isbn13: String): BookInfo? = withContext(Dispatchers.IO) {
     val url = URL("https://openlibrary.org/isbn/$isbn13.json")
@@ -1164,25 +1180,27 @@ fun PackageScreen(
             val jsonFile = File(exportDir, "listing.json")
             jsonFile.writeText(json.toString(2))
 
-            val authority = context.packageName + ".fileprovider"
-            val uris = (listOf(jsonFile) + copied).map { file ->
-              FileProvider.getUriForFile(context, authority, file)
-            }
+            // Zip export
+            val zipFile = File(exportDir.parentFile, "listlens_${isbn}_${System.currentTimeMillis()}.zip")
+            zipDirectoryToFile(exportDir, zipFile)
 
-            val shareIntent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-              type = "application/octet-stream"
-              putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+            val authority = context.packageName + ".fileprovider"
+            val uri = FileProvider.getUriForFile(context, authority, zipFile)
+
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+              type = "application/zip"
+              putExtra(Intent.EXTRA_STREAM, uri)
               addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
-            context.startActivity(Intent.createChooser(shareIntent, "Share listing package"))
-            lastExportPath.value = exportDir.absolutePath
+            context.startActivity(Intent.createChooser(shareIntent, "Share listing ZIP"))
+            lastExportPath.value = zipFile.absolutePath
           } catch (e: Exception) {
             error.value = e.message ?: "Export failed"
           }
         },
       ) {
-        Text("Share listing package")
+        Text("Share listing ZIP")
       }
 
       RowButtons(
