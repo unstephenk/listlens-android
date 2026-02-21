@@ -106,11 +106,13 @@ fun CategoryScreen(
     if (recent.value.isNotEmpty()) {
       Text("Recent")
       recent.value.take(5).forEach { isbn ->
+        val title = Prefs.bookTitleFlow(context, isbn).collectAsState(initial = null)
         Button(
           onClick = { onRecentIsbn(isbn) },
           modifier = Modifier.fillMaxWidth(),
         ) {
-          Text(isbn)
+          val t = title.value
+          if (t.isNullOrBlank()) Text(isbn) else Text("$isbn — $t")
         }
       }
     }
@@ -605,6 +607,12 @@ fun ConfirmBookScreen(
         is BookLookupState.NotFound -> Text("No Open Library match found (you can still continue).")
         is BookLookupState.Error -> Text("Lookup: ${s.message}")
         is BookLookupState.Found -> {
+          // Cache for the home "Recent" list.
+          LaunchedEffect(s.book.title) {
+            val isbnToCache = normalized ?: return@LaunchedEffect
+            runCatching { Prefs.setBookTitle(context, isbnToCache, s.book.title) }
+          }
+
           Text("Title: ${s.book.title}")
           s.book.publishDate?.let { Text("Published: $it") }
           s.book.publishers?.takeIf { it.isNotEmpty() }?.let { Text("Publisher: ${it.first()}") }
