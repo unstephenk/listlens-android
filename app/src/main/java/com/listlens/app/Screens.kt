@@ -3,6 +3,7 @@ package com.listlens.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -152,16 +153,30 @@ fun DraftsScreen(
   onBack: () -> Unit,
   onResume: (String) -> Unit,
 ) {
+  data class DraftRow(
+    val isbn: String,
+    val photoCount: Int,
+    val lastUpdatedMs: Long,
+  )
   val context = LocalContext.current
-  val drafts = remember { mutableStateOf<List<String>>(emptyList()) }
+  val drafts = remember { mutableStateOf<List<DraftRow>>(emptyList()) }
   val error = remember { mutableStateOf<String?>(null) }
+
+  val confirmDelete = remember { mutableStateOf<String?>(null) }
 
   fun reload() {
     val photosRoot = File(context.filesDir, "photos")
     val list = photosRoot
       .listFiles(FileFilter { it.isDirectory })
-      ?.map { it.name }
-      ?.sortedDescending()
+      ?.map { dir ->
+        val files = dir.listFiles()?.filter { it.isFile } ?: emptyList()
+        DraftRow(
+          isbn = dir.name,
+          photoCount = files.size,
+          lastUpdatedMs = (files.maxOfOrNull { it.lastModified() } ?: dir.lastModified()),
+        )
+      }
+      ?.sortedByDescending { it.lastUpdatedMs }
       ?: emptyList()
     drafts.value = list
   }
@@ -182,20 +197,29 @@ fun DraftsScreen(
       if (drafts.value.isEmpty()) {
         Text("No drafts yet.")
       } else {
-        drafts.value.forEach { isbn ->
-          val title = Prefs.bookTitleFlow(context, isbn).collectAsState(initial = null)
-          val photosDir = remember(isbn) { File(context.filesDir, "photos/$isbn") }
-          val count = remember(isbn) {
-            photosDir.listFiles()?.count { it.isFile } ?: 0
-          }
+        val df = remember { SimpleDateFormat("MMM d, h:mm a", Locale.US) }
 
-          Button(
-            onClick = { onResume(isbn) },
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            val t = title.value
-            val label = if (t.isNullOrBlank()) isbn else "$isbn — $t"
-            Text("$label ($count photos)")
+        drafts.value.forEach { row ->
+          val title = Prefs.bookTitleFlow(context, row.isbn).collectAsState(initial = null)
+          val t = title.value
+          val label = if (t.isNullOrBlank()) row.isbn else "${row.isbn} — $t"
+          val updated = runCatching { df.format(Date(row.lastUpdatedMs)) }.getOrNull()
+
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+              onClick = { onResume(row.isbn) },
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              val suffix = if (updated == null) "" else " • $updated"
+              Text("$label (${row.photoCount} photos)$suffix")
+            }
+
+            Button(
+              onClick = { confirmDelete.value = row.isbn },
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Text("Delete")
+            }
           }
         }
 
@@ -209,6 +233,29 @@ fun DraftsScreen(
 
       Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
     }
+  }
+
+  confirmDelete.value?.let { isbn ->
+    AlertDialog(
+      onDismissRequest = { confirmDelete.value = null },
+      title = { Text("Delete draft?") },
+      text = { Text("This deletes the photos stored for ISBN $isbn.") },
+      confirmButton = {
+        Button(
+          onClick = {
+            runCatching {
+              val dir = File(context.filesDir, "photos/$isbn")
+              dir.deleteRecursively()
+              reload()
+            }
+            confirmDelete.value = null
+          },
+        ) { Text("Delete") }
+      },
+      dismissButton = {
+        Button(onClick = { confirmDelete.value = null }) { Text("Cancel") }
+      },
+    )
   }
 }
 
@@ -735,6 +782,52 @@ data class BookInfo(
   val publishers: List<String>?,
 )
 
+private fun analyzePhotoForWarnings(file: File): String? {
+  // Very lightweight heuristic checks: "too dark" and "too flat".
+  // (Not a substitute for real blur/glare detection, but catches obvious failures.)
+  return runCatching {
+    val opts = BitmapFactory.Options().apply { inSampleSize = 16 }
+    val bmp = BitmapFactory.decodeFile(file.absolutePath, opts) ?: return@runCatching null
+    val w = bmp.width
+    val h = bmp.height
+    if (w <= 0 || h <= 0) return@runCatching null
+
+    var sum = 0.0
+    var sumSq = 0.0
+    var count = 0
+
+    // Sample a grid of pixels (avoid full scan)
+    val stepX = maxOf(1, w / 48)
+    val stepY = maxOf(1, h / 48)
+    var y = 0
+    while (y < h) {
+      var x = 0
+      while (x < w) {
+        val c = bmp.getPixel(x, y)
+        val r = (c shr 16) and 0xFF
+        val g = (c shr 8) and 0xFF
+        val b = (c) and 0xFF
+        val luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        sum += luma
+        sumSq += luma * luma
+        count++
+        x += stepX
+      }
+      y += stepY
+    }
+
+    if (count == 0) return@runCatching null
+    val mean = sum / count
+    val varr = (sumSq / count) - (mean * mean)
+
+    when {
+      mean < 35 -> "Warning: photo looks very dark"
+      varr < 120 -> "Warning: photo may be blurry/low-contrast"
+      else -> null
+    }
+  }.getOrNull()
+}
+
 private fun zipDirectoryToFile(dir: File, zipFile: File) {
   ZipOutputStream(zipFile.outputStream().buffered()).use { zos ->
     val basePath = dir.absolutePath.trimEnd(File.separatorChar) + File.separator
@@ -816,6 +909,7 @@ fun PhotosScreen(
   val photosDir = remember(isbn) { File(context.filesDir, "photos/$isbn").apply { mkdirs() } }
   val photos = remember { mutableStateOf<List<File>>(emptyList()) }
   val errorText = remember { mutableStateOf<String?>(null) }
+  val warningText = remember { mutableStateOf<String?>(null) }
 
   fun reloadPhotos() {
     // Load any existing photos for this ISBN.
@@ -925,6 +1019,7 @@ fun PhotosScreen(
                 photos.value = (photos.value + file).distinctBy { it.absolutePath }
               }
               errorText.value = null
+              warningText.value = analyzePhotoForWarnings(file)
             },
             onError = { msg ->
               errorText.value = msg
@@ -939,6 +1034,7 @@ fun PhotosScreen(
       ) {
         Text("Photos: ${photos.value.size}/5")
         errorText.value?.let { Text("Error: $it") }
+        warningText.value?.let { Text(it) }
 
         if (photos.value.isNotEmpty()) {
           LazyVerticalGrid(
@@ -1171,6 +1267,15 @@ fun PackageScreen(
               put("publishers", book?.publishers?.let { JSONArray(it) })
               put("condition", condition.value)
               put("notes", notes.value)
+              put(
+                "descriptionText",
+                buildString {
+                  appendLine(book?.title ?: "(unknown title)")
+                  appendLine("ISBN: $isbn")
+                  appendLine("Condition: ${condition.value}")
+                  if (notes.value.isNotBlank()) appendLine("Notes: ${notes.value}")
+                }.trim(),
+              )
               put("coverUrl", OpenLibrary.coverUrl(isbn, size = "L"))
               put(
                 "photos",
@@ -1201,6 +1306,27 @@ fun PackageScreen(
         },
       ) {
         Text("Share listing ZIP")
+      }
+
+      Button(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = {
+          val book = (state.value as? BookLookupState.Found)?.book
+          val text = buildString {
+            appendLine(book?.title ?: "(unknown title)")
+            appendLine("ISBN: $isbn")
+            appendLine("Condition: ${condition.value}")
+            if (notes.value.isNotBlank()) appendLine("Notes: ${notes.value}")
+          }.trim()
+
+          val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+          }
+          context.startActivity(Intent.createChooser(intent, "Share listing text"))
+        },
+      ) {
+        Text("Share listing text")
       }
 
       RowButtons(
