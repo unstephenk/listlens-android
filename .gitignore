@@ -1,7 +1,10 @@
 # Local toolchains / env dirs (never commit)
 .jdk/
+.jdk
 .kotlin/
+.kotlin
 .sdk/
+.sdk
 
 # IDE / build
 *.iml
