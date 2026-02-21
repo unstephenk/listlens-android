@@ -124,13 +124,19 @@ fun ScanBooksScreen(
     requestPermission.launch(Manifest.permission.CAMERA)
   }
 
-  // Prevent double-navigation when analyzer fires multiple frames.
+  // Prevent double-emits when analyzer fires multiple frames.
   val didEmit = remember { mutableStateOf(false) }
   val latestOnIsbnFound = rememberUpdatedState(onIsbnFound)
 
   // Lightweight status + overlay.
   val status = remember { mutableStateOf("Scanning barcode…") }
   val foundIsbn = remember { mutableStateOf<String?>(null) }
+
+  fun resetScan() {
+    didEmit.value = false
+    foundIsbn.value = null
+    status.value = "Scanning barcode…"
+  }
 
   // Debug manual entry for deterministic testing on emulator.
   val showDebugDialog = remember { mutableStateOf(false) }
@@ -198,17 +204,21 @@ fun ScanBooksScreen(
               ) {
                 Text("ISBN detected", color = Color.White)
                 Text(isbn, color = Color.White)
-                Text("Hold still…", color = Color.White)
+
+                RowButtons(
+                  left = "Retake",
+                  right = "Use this",
+                  onLeft = { resetScan() },
+                  onRight = { latestOnIsbnFound.value(isbn) },
+                )
+
+                Text("If this looks wrong, retake or use manual entry.", color = Color.White)
               }
             }
           }
 
-          LaunchedEffect(foundIsbn.value) {
-            val isbn = foundIsbn.value ?: return@LaunchedEffect
-            // Small pause so the user sees the result.
-            delay(1200)
-            latestOnIsbnFound.value(isbn)
-          }
+          // Navigation is explicit (tap) to avoid accidental scans while moving the camera.
+          // (We keep the overlay so you can visually confirm the ISBN before proceeding.)
         }
       }
 
@@ -261,7 +271,7 @@ fun ScanBooksScreen(
         confirmButton = {
           Button(
             onClick = {
-              val isbn = extractIsbnFromAny(debugText.value)
+              val isbn = Isbn.extractIsbn13(debugText.value)
               if (isbn != null) {
                 showDebugDialog.value = false
                 if (!didEmit.value) {
@@ -431,7 +441,7 @@ private fun CameraIsbnScanner(
               barcodeScanner.process(image)
                 .addOnSuccessListener { barcodes ->
                   val raw = barcodes.firstOrNull()?.rawValue
-                  val isbn = raw?.let(::extractIsbnFromAny)
+                  val isbn = raw?.let(Isbn::extractIsbn13)
                   if (isbn != null) {
                     latestOnStatus.value("Found ISBN via barcode")
                     latestOnIsbn.value(isbn)
@@ -452,7 +462,7 @@ private fun CameraIsbnScanner(
                   textRecognizer.process(image)
                     .addOnSuccessListener { visionText ->
                       val ocrText = visionText.text
-                      val ocrIsbn = extractIsbnFromAny(ocrText)
+                      val ocrIsbn = Isbn.extractIsbn13(ocrText)
                       if (ocrIsbn != null) {
                         latestOnStatus.value("Found ISBN via OCR")
                         latestOnIsbn.value(ocrIsbn)
@@ -488,11 +498,38 @@ private fun CameraIsbnScanner(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConfirmPlaceholderScreen(
-  isbn: String,
+fun ConfirmBookScreen(
+  initialIsbn: String,
   onBack: () -> Unit,
-  onAccept: () -> Unit,
+  onAccept: (String) -> Unit,
 ) {
+  val isbnText = remember { mutableStateOf(initialIsbn) }
+  val normalized = remember(isbnText.value) { Isbn.extractIsbn13(isbnText.value) }
+  val effectiveIsbn = normalized ?: ""
+
+  val state = remember { mutableStateOf<BookLookupState>(BookLookupState.Loading) }
+  val lookupError = remember { mutableStateOf<String?>(null) }
+
+  LaunchedEffect(effectiveIsbn) {
+    lookupError.value = null
+    if (effectiveIsbn.isBlank()) {
+      state.value = BookLookupState.Error("Enter a valid ISBN")
+      return@LaunchedEffect
+    }
+
+    // Small debounce so typing doesn't spam the network.
+    delay(350)
+
+    state.value = BookLookupState.Loading
+    state.value = try {
+      val book = OpenLibrary.lookupByIsbn(effectiveIsbn)
+      if (book == null) BookLookupState.NotFound else BookLookupState.Found(book)
+    } catch (e: Exception) {
+      lookupError.value = e.message
+      BookLookupState.Error(e.message ?: "Lookup failed")
+    }
+  }
+
   Scaffold(
     topBar = { TopAppBar(title = { Text("Confirm") }) },
   ) { padding ->
@@ -500,36 +537,40 @@ fun ConfirmPlaceholderScreen(
       modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-      val coverUrl = remember(isbn) { OpenLibrary.coverUrl(isbn, size = "L") }
-
-      // Best-effort cover art (Open Library). If there's no cover, Coil will just fail silently.
-      Image(
-        painter = rememberAsyncImagePainter(coverUrl),
-        contentDescription = "Book cover",
-        modifier = Modifier
-          .fillMaxWidth()
-          .background(Color(0xFF111111))
-          .padding(8.dp),
-      )
-
-      Text("Detected ISBN:")
-      Text(isbn)
-      val state = remember { mutableStateOf<BookLookupState>(BookLookupState.Loading) }
-
-      LaunchedEffect(isbn) {
-        state.value = BookLookupState.Loading
-        state.value = try {
-          val book = OpenLibrary.lookupByIsbn(isbn)
-          if (book == null) BookLookupState.NotFound else BookLookupState.Found(book)
-        } catch (e: Exception) {
-          BookLookupState.Error(e.message ?: "Lookup failed")
-        }
+      val coverUrl = remember(effectiveIsbn) {
+        if (effectiveIsbn.isBlank()) null else OpenLibrary.coverUrl(effectiveIsbn, size = "L")
       }
+
+      coverUrl?.let {
+        // Best-effort cover art (Open Library). If there's no cover, Coil will just fail silently.
+        Image(
+          painter = rememberAsyncImagePainter(it),
+          contentDescription = "Book cover",
+          modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF111111))
+            .padding(8.dp),
+        )
+      }
+
+      Text("ISBN")
+      OutlinedTextField(
+        value = isbnText.value,
+        onValueChange = { isbnText.value = it },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = Modifier.fillMaxWidth(),
+        supportingText = {
+          val s = normalized
+          if (s == null) Text("Paste ISBN-13 or ISBN-10 (we'll normalize to ISBN-13).")
+          else Text("Normalized ISBN-13: $s")
+        },
+      )
 
       when (val s = state.value) {
         is BookLookupState.Loading -> Text("Looking up book info…")
-        is BookLookupState.NotFound -> Text("No Open Library match found (we can still continue).")
-        is BookLookupState.Error -> Text("Lookup error: ${s.message}")
+        is BookLookupState.NotFound -> Text("No Open Library match found (you can still continue).")
+        is BookLookupState.Error -> Text("Lookup: ${s.message}")
         is BookLookupState.Found -> {
           Text("Title: ${s.book.title}")
           s.book.publishDate?.let { Text("Published: $it") }
@@ -541,8 +582,14 @@ fun ConfirmPlaceholderScreen(
         left = "Retake",
         right = "Use this",
         onLeft = onBack,
-        onRight = onAccept,
+        onRight = {
+          val isbn13 = normalized
+          if (isbn13 != null && Isbn.isValidIsbn13(isbn13)) onAccept(isbn13)
+          else lookupError.value = "Invalid ISBN"
+        },
       )
+
+      lookupError.value?.let { Text("Error: $it") }
     }
   }
 }

@@ -63,10 +63,10 @@ fun ListLensApp() {
         }
         composable("confirm/{isbn}") { backStack ->
           val isbn = backStack.arguments?.getString("isbn") ?: ""
-          ConfirmPlaceholderScreen(
-            isbn = isbn,
+          ConfirmBookScreen(
+            initialIsbn = isbn,
             onBack = { nav.popBackStack() },
-            onAccept = { nav.navigate("photos/$isbn") },
+            onAccept = { confirmedIsbn -> nav.navigate("photos/$confirmedIsbn") },
           )
         }
         composable("photos/{isbn}") { backStack ->
