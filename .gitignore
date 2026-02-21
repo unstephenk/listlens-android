@@ -1,12 +1,12 @@
-# Android Studio local settings
+# Local toolchains / env dirs (never commit)
 .jdk/
+.kotlin/
 .sdk/
 
-# Gradle
+# IDE / build
+*.iml
+.idea/
 .gradle/
-local.properties
 
-# Build outputs
-**/build/
-*.apk
-*.aab
+# Machine-specific
+local.properties
