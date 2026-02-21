@@ -243,10 +243,23 @@ fun DraftsScreen(
             }
 
             Button(
+              onClick = {
+                runCatching {
+                  val dir = File(context.filesDir, "photos/${row.isbn}")
+                  dir.listFiles()?.filter { it.isFile }?.forEach { it.delete() }
+                }
+                reload()
+              },
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Text("Clear photos")
+            }
+
+            Button(
               onClick = { confirmDelete.value = row.isbn },
               modifier = Modifier.fillMaxWidth(),
             ) {
-              Text("Delete")
+              Text("Delete draft")
             }
           }
         }
@@ -274,7 +287,7 @@ fun DraftsScreen(
     AlertDialog(
       onDismissRequest = { confirmDelete.value = null },
       title = { Text("Delete draft?") },
-      text = { Text("This deletes the photos stored for ISBN $isbn.") },
+      text = { Text("This deletes the draft folder for ISBN $isbn (photos, etc).") },
       confirmButton = {
         Button(
           onClick = {
