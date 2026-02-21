@@ -132,6 +132,9 @@ fun ScanBooksScreen(
   onBack: () -> Unit,
   onIsbnFound: (String) -> Unit,
 ) {
+  enum class ScanSource { BARCODE, OCR, MANUAL }
+  data class ScanHit(val isbn13: String, val source: ScanSource )
+
   val haptics = LocalHapticFeedback.current
 
   val hasPermission = remember { mutableStateOf(false) }
@@ -150,17 +153,17 @@ fun ScanBooksScreen(
 
   // Lightweight status + overlay.
   val status = remember { mutableStateOf("Scanning barcode…") }
-  val foundIsbn = remember { mutableStateOf<String?>(null) }
+  val hit = remember { mutableStateOf<ScanHit?>(null) }
 
   fun resetScan() {
     didEmit.value = false
-    foundIsbn.value = null
+    hit.value = null
     status.value = "Scanning barcode…"
   }
 
-  // Debug manual entry for deterministic testing on emulator.
-  val showDebugDialog = remember { mutableStateOf(false) }
-  val debugText = remember { mutableStateOf("9780143127741") }
+  // Manual entry for deterministic testing (and fallback when camera struggles).
+  val showManualDialog = remember { mutableStateOf(false) }
+  val manualText = remember { mutableStateOf("") }
 
   Scaffold(
     topBar = { TopAppBar(title = { Text("Scan") }) },
@@ -200,17 +203,17 @@ fun ScanBooksScreen(
           CameraIsbnScanner(
             paused = didEmit.value,
             onStatus = { status.value = it },
-            onIsbn = { isbn ->
+            onHit = { found ->
               if (didEmit.value) return@CameraIsbnScanner
               didEmit.value = true
-              foundIsbn.value = isbn
+              hit.value = found
               status.value = "ISBN found"
               haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
             },
           )
 
           // Overlay when found
-          foundIsbn.value?.let { isbn ->
+          hit.value?.let { found ->
             Box(
               modifier = Modifier
                 .fillMaxSize()
@@ -223,16 +226,28 @@ fun ScanBooksScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
               ) {
                 Text("ISBN detected", color = Color.White)
-                Text(isbn, color = Color.White)
+                Text(found.isbn13, color = Color.White)
+                Text(
+                  text = when (found.source) {
+                    ScanSource.BARCODE -> "Source: barcode"
+                    ScanSource.OCR -> "Source: OCR"
+                    ScanSource.MANUAL -> "Source: manual"
+                  },
+                  color = Color.White,
+                )
 
                 RowButtons(
                   left = "Retake",
                   right = "Use this",
                   onLeft = { resetScan() },
-                  onRight = { latestOnIsbnFound.value(isbn) },
+                  onRight = { latestOnIsbnFound.value(found.isbn13) },
                 )
 
-                Text("If this looks wrong, retake or use manual entry.", color = Color.White)
+                Button(onClick = { showManualDialog.value = true }) {
+                  Text("Manual entry")
+                }
+
+                Text("If this looks wrong, retake or enter it manually.", color = Color.White)
               }
             }
           }
@@ -249,17 +264,14 @@ fun ScanBooksScreen(
         Text(status.value)
         Text("Tip: Try the back cover barcode first. OCR will kick in if needed.")
 
-        if (BuildConfig.DEBUG) {
-          Button(
-            onClick = {
-              // Reset to a known-good value each time for deterministic testing.
-              debugText.value = "9780143127741"
-              showDebugDialog.value = true
-            },
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Text("Debug: Enter ISBN")
-          }
+        Button(
+          onClick = {
+            manualText.value = ""
+            showManualDialog.value = true
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Enter ISBN manually")
         }
 
         Button(
@@ -271,16 +283,16 @@ fun ScanBooksScreen(
       }
     }
 
-    if (BuildConfig.DEBUG && showDebugDialog.value) {
+    if (showManualDialog.value) {
       AlertDialog(
-        onDismissRequest = { showDebugDialog.value = false },
+        onDismissRequest = { showManualDialog.value = false },
         title = { Text("Enter ISBN") },
         text = {
           Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Paste ISBN-13 or ISBN-10. We'll validate + convert to ISBN-13.")
             OutlinedTextField(
-              value = debugText.value,
-              onValueChange = { debugText.value = it },
+              value = manualText.value,
+              onValueChange = { manualText.value = it },
               singleLine = true,
               label = { Text("ISBN") },
               keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -291,15 +303,13 @@ fun ScanBooksScreen(
         confirmButton = {
           Button(
             onClick = {
-              val isbn = Isbn.extractIsbn13(debugText.value)
+              val isbn = Isbn.extractIsbn13(manualText.value)
               if (isbn != null) {
-                showDebugDialog.value = false
-                if (!didEmit.value) {
-                  didEmit.value = true
-                  foundIsbn.value = isbn
-                  status.value = "ISBN found"
-                  haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                }
+                showManualDialog.value = false
+                didEmit.value = true
+                hit.value = ScanHit(isbn13 = isbn, source = ScanSource.MANUAL)
+                status.value = "ISBN found"
+                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
               } else {
                 status.value = "Invalid ISBN"
               }
@@ -308,8 +318,8 @@ fun ScanBooksScreen(
         },
         dismissButton = {
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { debugText.value = "" }) { Text("Clear") }
-            Button(onClick = { showDebugDialog.value = false }) { Text("Cancel") }
+            Button(onClick = { manualText.value = "" }) { Text("Clear") }
+            Button(onClick = { showManualDialog.value = false }) { Text("Cancel") }
           }
         },
       )
@@ -393,10 +403,10 @@ private fun calcEan13CheckDigit(first12Digits: String): Int {
 private fun CameraIsbnScanner(
   paused: Boolean,
   onStatus: (String) -> Unit,
-  onIsbn: (String) -> Unit,
+  onHit: (ScanBooksScreen.ScanHit) -> Unit,
 ) {
   val lifecycleOwner = LocalLifecycleOwner.current
-  val latestOnIsbn = rememberUpdatedState(onIsbn)
+  val latestOnHit = rememberUpdatedState(onHit)
   val latestOnStatus = rememberUpdatedState(onStatus)
 
   // Barcode scanner (fast path).
@@ -464,7 +474,7 @@ private fun CameraIsbnScanner(
                   val isbn = raw?.let(Isbn::extractIsbn13)
                   if (isbn != null) {
                     latestOnStatus.value("Found ISBN via barcode")
-                    latestOnIsbn.value(isbn)
+                    latestOnHit.value(ScanBooksScreen.ScanHit(isbn13 = isbn, source = ScanBooksScreen.ScanSource.BARCODE))
                     imageProxy.close()
                     return@addOnSuccessListener
                   }
@@ -485,7 +495,7 @@ private fun CameraIsbnScanner(
                       val ocrIsbn = Isbn.extractIsbn13(ocrText)
                       if (ocrIsbn != null) {
                         latestOnStatus.value("Found ISBN via OCR")
-                        latestOnIsbn.value(ocrIsbn)
+                        latestOnHit.value(ScanBooksScreen.ScanHit(isbn13 = ocrIsbn, source = ScanBooksScreen.ScanSource.OCR))
                       }
                     }
                     .addOnCompleteListener {
