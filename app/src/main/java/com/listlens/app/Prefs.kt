@@ -16,6 +16,7 @@ object Prefs {
   private val recentIsbnsKey = stringPreferencesKey("recent_isbns")
 
   private fun titleKey(isbn13: String) = stringPreferencesKey("title_$isbn13")
+  private fun updatedKey(isbn13: String) = stringPreferencesKey("updated_$isbn13")
 
   fun conditionFlow(context: Context, isbn13: String): Flow<String?> =
     context.dataStore.data.map { it[conditionKey(isbn13)] }
@@ -68,8 +69,14 @@ object Prefs {
   suspend fun setBookTitle(context: Context, isbn13: String, title: String) {
     context.dataStore.edit { prefs ->
       prefs[titleKey(isbn13)] = title
+      prefs[updatedKey(isbn13)] = System.currentTimeMillis().toString()
     }
   }
+
+  fun updatedAtFlow(context: Context, isbn13: String): Flow<Long?> =
+    context.dataStore.data.map { prefs ->
+      prefs[updatedKey(isbn13)]?.toLongOrNull()
+    }
 
   suspend fun clearRecentIsbns(context: Context) {
     context.dataStore.edit { prefs ->

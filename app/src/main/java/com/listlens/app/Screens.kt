@@ -184,6 +184,7 @@ fun DraftsScreen(
     val isbn: String,
     val photoCount: Int,
     val lastUpdatedMs: Long,
+    val title: String?,
   )
   val context = LocalContext.current
   val drafts = remember { mutableStateOf<List<DraftRow>>(emptyList()) }
@@ -198,10 +199,12 @@ fun DraftsScreen(
       .listFiles(FileFilter { it.isDirectory })
       ?.map { dir ->
         val files = dir.listFiles()?.filter { it.isFile } ?: emptyList()
+        // Title is stored in DataStore; we read it in the UI layer.
         DraftRow(
           isbn = dir.name,
           photoCount = files.size,
           lastUpdatedMs = (files.maxOfOrNull { it.lastModified() } ?: dir.lastModified()),
+          title = null,
         )
       }
       ?.sortedByDescending { it.lastUpdatedMs }
@@ -229,9 +232,12 @@ fun DraftsScreen(
 
         drafts.value.forEach { row ->
           val title = Prefs.bookTitleFlow(context, row.isbn).collectAsState(initial = null)
+          val updatedAt = Prefs.updatedAtFlow(context, row.isbn).collectAsState(initial = null)
+
           val t = title.value
           val label = if (t.isNullOrBlank()) row.isbn else "${row.isbn} — $t"
-          val updated = runCatching { df.format(Date(row.lastUpdatedMs)) }.getOrNull()
+          val stamp = updatedAt.value ?: row.lastUpdatedMs
+          val updated = runCatching { df.format(Date(stamp)) }.getOrNull()
 
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
