@@ -1213,6 +1213,43 @@ fun PackageScreen(
   }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DoneScreen(
+  isbn: String,
+  onScanNext: () -> Unit,
+  onDrafts: () -> Unit,
+  onHome: () -> Unit,
+) {
+  val context = LocalContext.current
+  val title = Prefs.bookTitleFlow(context, isbn).collectAsState(initial = null)
+
+  Scaffold(
+    topBar = { TopAppBar(title = { Text("Done") }) },
+  ) { padding ->
+    Column(
+      modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      val t = title.value
+      Text(if (t.isNullOrBlank()) "Saved draft for $isbn" else "Saved draft for $isbn — $t")
+      Text("Next?")
+
+      Button(onClick = onScanNext, modifier = Modifier.fillMaxWidth()) {
+        Text("Scan next book")
+      }
+
+      Button(onClick = onDrafts, modifier = Modifier.fillMaxWidth()) {
+        Text("View drafts")
+      }
+
+      Button(onClick = onHome, modifier = Modifier.fillMaxWidth()) {
+        Text("Back to home")
+      }
+    }
+  }
+}
+
 @SuppressLint("UnsafeOptInUsageError")
 @Composable
 private fun CameraPhotoCapture(

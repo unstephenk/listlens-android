@@ -91,7 +91,17 @@ fun ListLensApp() {
           PackageScreen(
             isbn = isbn,
             onBack = { nav.popBackStack() },
-            onDone = { nav.popBackStack("category", inclusive = false) },
+            onDone = { nav.navigate("done/$isbn") },
+          )
+        }
+
+        composable("done/{isbn}") { backStack ->
+          val isbn = backStack.arguments?.getString("isbn") ?: ""
+          DoneScreen(
+            isbn = isbn,
+            onScanNext = { nav.navigate("scan/books") },
+            onDrafts = { nav.navigate("drafts") },
+            onHome = { nav.popBackStack("category", inclusive = false) },
           )
         }
       }
