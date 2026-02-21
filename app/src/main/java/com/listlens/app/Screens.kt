@@ -179,6 +179,8 @@ fun CategoryScreen(
 fun DraftsScreen(
   onBack: () -> Unit,
   onResume: (String) -> Unit,
+  onExport: (String) -> Unit,
+  onConfirm: (String) -> Unit,
 ) {
   data class DraftRow(
     val isbn: String,
@@ -239,6 +241,9 @@ fun DraftsScreen(
           val stamp = updatedAt.value ?: row.lastUpdatedMs
           val updated = runCatching { df.format(Date(stamp)) }.getOrNull()
 
+          val cond = Prefs.conditionFlow(context, row.isbn).collectAsState(initial = null)
+          val notes = Prefs.notesFlow(context, row.isbn).collectAsState(initial = null)
+
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
               onClick = { onResume(row.isbn) },
@@ -246,6 +251,33 @@ fun DraftsScreen(
             ) {
               val suffix = if (updated == null) "" else " • $updated"
               Text("$label (${row.photoCount} photos)$suffix")
+            }
+
+            val metaLine = buildString {
+              val c = cond.value
+              val n = notes.value
+              if (!c.isNullOrBlank()) append("Condition: $c")
+              if (!n.isNullOrBlank()) {
+                if (isNotEmpty()) append(" • ")
+                append("Notes: ")
+                append(n.take(60))
+                if (n.length > 60) append("…")
+              }
+            }
+            if (metaLine.isNotBlank()) Text(metaLine)
+
+            Button(
+              onClick = { onExport(row.isbn) },
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Text("Export")
+            }
+
+            Button(
+              onClick = { onConfirm(row.isbn) },
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Text("Edit/Confirm ISBN")
             }
 
             Button(
@@ -906,6 +938,18 @@ private fun analyzePhotoForWarnings(file: File): String? {
   }.getOrNull()
 }
 
+private fun listingText(
+  isbn: String,
+  title: String?,
+  condition: String,
+  notes: String,
+): String = buildString {
+  appendLine(title ?: "(unknown title)")
+  appendLine("ISBN: $isbn")
+  appendLine("Condition: $condition")
+  if (notes.isNotBlank()) appendLine("Notes: $notes")
+}.trim()
+
 private fun zipDirectoryToFile(dir: File, zipFile: File) {
   ZipOutputStream(zipFile.outputStream().buffered()).use { zos ->
     val basePath = dir.absolutePath.trimEnd(File.separatorChar) + File.separator
@@ -1410,12 +1454,12 @@ fun PackageScreen(
               put("notes", notes.value)
               put(
                 "descriptionText",
-                buildString {
-                  appendLine(book?.title ?: "(unknown title)")
-                  appendLine("ISBN: $isbn")
-                  appendLine("Condition: ${condition.value}")
-                  if (notes.value.isNotBlank()) appendLine("Notes: ${notes.value}")
-                }.trim(),
+                listingText(
+                  isbn = isbn,
+                  title = book?.title,
+                  condition = condition.value,
+                  notes = notes.value,
+                ),
               )
               put("coverUrl", BookMetadata.coverUrl(isbn, size = "L"))
               put(
@@ -1425,6 +1469,17 @@ fun PackageScreen(
             }
             val jsonFile = File(exportDir, "listing.json")
             jsonFile.writeText(json.toString(2))
+
+            // Also write a plain-text template for convenience.
+            val txtFile = File(exportDir, "listing.txt")
+            txtFile.writeText(
+              listingText(
+                isbn = isbn,
+                title = book?.title,
+                condition = condition.value,
+                notes = notes.value,
+              ) + "\n",
+            )
 
             // Zip export
             val zipFile = File(exportDir.parentFile, "listlens_${isbn}_${System.currentTimeMillis()}.zip")
@@ -1453,12 +1508,12 @@ fun PackageScreen(
         modifier = Modifier.fillMaxWidth(),
         onClick = {
           val book = (state.value as? BookLookupState.Found)?.book
-          val text = buildString {
-            appendLine(book?.title ?: "(unknown title)")
-            appendLine("ISBN: $isbn")
-            appendLine("Condition: ${condition.value}")
-            if (notes.value.isNotBlank()) appendLine("Notes: ${notes.value}")
-          }.trim()
+          val text = listingText(
+            isbn = isbn,
+            title = book?.title,
+            condition = condition.value,
+            notes = notes.value,
+          )
 
           val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"

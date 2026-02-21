@@ -60,6 +60,8 @@ fun ListLensApp() {
           DraftsScreen(
             onBack = { nav.popBackStack() },
             onResume = { isbn -> nav.navigate("photos/$isbn") },
+            onExport = { isbn -> nav.navigate("package/$isbn") },
+            onConfirm = { isbn -> nav.navigate("confirm/$isbn") },
           )
         }
 
