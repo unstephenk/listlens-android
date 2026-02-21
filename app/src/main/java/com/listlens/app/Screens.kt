@@ -135,12 +135,21 @@ fun CategoryScreen(
       Text("Recent")
       recent.value.take(5).forEach { isbn ->
         val title = Prefs.bookTitleFlow(context, isbn).collectAsState(initial = null)
-        Button(
-          onClick = { onRecentIsbn(isbn) },
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          val t = title.value
-          if (t.isNullOrBlank()) Text(isbn) else Text("$isbn — $t")
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Button(
+            onClick = { onRecentIsbn(isbn) },
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            val t = title.value
+            if (t.isNullOrBlank()) Text(isbn) else Text("$isbn — $t")
+          }
+
+          Button(
+            onClick = { scope.launch { runCatching { Prefs.removeRecentIsbn(context, isbn) } } },
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text("Remove")
+          }
         }
       }
 
@@ -189,8 +198,10 @@ fun DraftsScreen(
     val title: String?,
   )
   val context = LocalContext.current
+  val scope = rememberCoroutineScope()
   val drafts = remember { mutableStateOf<List<DraftRow>>(emptyList()) }
   val error = remember { mutableStateOf<String?>(null) }
+  val exportAllStatus = remember { mutableStateOf<String?>(null) }
 
   val confirmDelete = remember { mutableStateOf<String?>(null) }
   val confirmDeleteAll = remember { mutableStateOf(false) }
@@ -226,6 +237,7 @@ fun DraftsScreen(
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
       error.value?.let { Text("Error: $it") }
+      exportAllStatus.value?.let { Text(it) }
 
       if (drafts.value.isEmpty()) {
         Text("No drafts yet.")
@@ -307,6 +319,76 @@ fun DraftsScreen(
           modifier = Modifier.fillMaxWidth(),
         ) {
           Text("Refresh")
+        }
+
+        Button(
+          onClick = {
+            exportAllStatus.value = "Exporting…"
+            scope.launch {
+              val authority = context.packageName + ".fileprovider"
+              val photosRoot = File(context.filesDir, "photos")
+              val isbns = drafts.value.map { it.isbn }
+              val cacheOut = File(context.cacheDir, "exports/batch/${System.currentTimeMillis()}").apply { mkdirs() }
+
+              val zipFiles = withContext(Dispatchers.IO) {
+                isbns.mapNotNull { isbn ->
+                  runCatching {
+                    val photosDir = File(photosRoot, isbn)
+                    if (!photosDir.exists()) return@runCatching null
+                    val files = photosDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name } ?: emptyList()
+                    if (files.isEmpty()) return@runCatching null
+
+                    val exportDir = File(cacheOut, isbn).apply { mkdirs() }
+                    val copied = files.mapIndexed { index, src ->
+                      val ext = src.extension.ifBlank { "jpg" }
+                      val dst = File(exportDir, String.format(Locale.US, "photo_%02d.%s", index + 1, ext))
+                      src.copyTo(dst, overwrite = true)
+                      dst
+                    }
+
+                    val title = runCatching { Prefs.bookTitleFlow(context, isbn).first() }.getOrNull()
+                    val cond = runCatching { Prefs.conditionFlow(context, isbn).first() }.getOrNull() ?: ""
+                    val notes = runCatching { Prefs.notesFlow(context, isbn).first() }.getOrNull() ?: ""
+
+                    val json = JSONObject().apply {
+                      put("schemaVersion", 1)
+                      put("createdAtMs", System.currentTimeMillis())
+                      put("isbn13", isbn)
+                      put("title", title)
+                      put("condition", cond)
+                      put("notes", notes)
+                      put("descriptionText", listingText(isbn = isbn, title = title, condition = cond, notes = notes))
+                      put("coverUrl", BookMetadata.coverUrl(isbn, size = "L"))
+                      put("photos", JSONArray(copied.map { it.name }))
+                    }
+                    File(exportDir, "listing.json").writeText(json.toString(2))
+                    File(exportDir, "listing.txt").writeText(listingText(isbn = isbn, title = title, condition = cond, notes = notes) + "\n")
+
+                    val zip = File(cacheOut, "listlens_${isbn}_${System.currentTimeMillis()}.zip")
+                    zipDirectoryToFile(exportDir, zip)
+                    zip
+                  }.getOrNull()
+                }
+              }
+
+              if (zipFiles.isEmpty()) {
+                exportAllStatus.value = "No drafts with photos to export."
+                return@launch
+              }
+
+              val uris = zipFiles.map { FileProvider.getUriForFile(context, authority, it) }
+              val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "application/zip"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+              }
+              runCatching { context.startActivity(Intent.createChooser(intent, "Share draft ZIPs")) }
+              exportAllStatus.value = "Export ready (${zipFiles.size} ZIPs)."
+            }
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Export all drafts")
         }
 
         Button(

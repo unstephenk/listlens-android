@@ -83,5 +83,17 @@ object Prefs {
       prefs[recentIsbnsKey] = ""
     }
   }
+
+  suspend fun removeRecentIsbn(context: Context, isbn13: String) {
+    val normalized = Isbn.extractIsbn13(isbn13) ?: return
+    context.dataStore.edit { prefs ->
+      val remaining = prefs[recentIsbnsKey].orEmpty()
+        .split("|")
+        .map { it.trim() }
+        .filter { it.isNotBlank() && it != normalized }
+        .distinct()
+      prefs[recentIsbnsKey] = remaining.joinToString("|")
+    }
+  }
 }
 
