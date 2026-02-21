@@ -39,6 +39,7 @@ fun ListLensApp() {
           CategoryScreen(
             onBooks = { nav.navigate("scan/books") },
             onRecentIsbn = { isbn -> nav.navigate("confirm/$isbn") },
+            onDrafts = { nav.navigate("drafts") },
             onEbaySignIn = { nav.navigate("ebay") },
           )
         }
@@ -52,6 +53,13 @@ fun ListLensApp() {
           EbayHandoffScreen(
             uriString = Uri.decode(raw),
             onDone = { nav.popBackStack("category", inclusive = false) },
+          )
+        }
+
+        composable("drafts") {
+          DraftsScreen(
+            onBack = { nav.popBackStack() },
+            onResume = { isbn -> nav.navigate("photos/$isbn") },
           )
         }
 

@@ -75,6 +75,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileFilter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -87,10 +88,17 @@ import java.util.concurrent.atomic.AtomicInteger
 fun CategoryScreen(
   onBooks: () -> Unit,
   onRecentIsbn: (String) -> Unit,
+  onDrafts: () -> Unit,
   onEbaySignIn: () -> Unit,
 ) {
   val context = LocalContext.current
   val recent = Prefs.recentIsbnsFlow(context).collectAsState(initial = emptyList())
+
+  val draftCount = remember { mutableStateOf(0) }
+  LaunchedEffect(Unit) {
+    val photosRoot = File(context.filesDir, "photos")
+    draftCount.value = photosRoot.listFiles()?.count { it.isDirectory } ?: 0
+  }
 
   Column(
     modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -117,6 +125,15 @@ fun CategoryScreen(
       }
     }
 
+    if (draftCount.value > 0) {
+      Button(
+        onClick = onDrafts,
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Text("Drafts (${draftCount.value})")
+      }
+    }
+
     Spacer(Modifier.weight(1f))
 
     Button(onClick = onEbaySignIn, modifier = Modifier.fillMaxWidth()) {
@@ -124,6 +141,72 @@ fun CategoryScreen(
     }
 
     Text("Export: after photos, you’ll share a listing package (JSON + images).")
+  }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DraftsScreen(
+  onBack: () -> Unit,
+  onResume: (String) -> Unit,
+) {
+  val context = LocalContext.current
+  val drafts = remember { mutableStateOf<List<String>>(emptyList()) }
+  val error = remember { mutableStateOf<String?>(null) }
+
+  fun reload() {
+    val photosRoot = File(context.filesDir, "photos")
+    val list = photosRoot
+      .listFiles(FileFilter { it.isDirectory })
+      ?.map { it.name }
+      ?.sortedDescending()
+      ?: emptyList()
+    drafts.value = list
+  }
+
+  LaunchedEffect(Unit) {
+    runCatching { reload() }.onFailure { error.value = it.message }
+  }
+
+  Scaffold(
+    topBar = { TopAppBar(title = { Text("Drafts") }) },
+  ) { padding ->
+    Column(
+      modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      error.value?.let { Text("Error: $it") }
+
+      if (drafts.value.isEmpty()) {
+        Text("No drafts yet.")
+      } else {
+        drafts.value.forEach { isbn ->
+          val title = Prefs.bookTitleFlow(context, isbn).collectAsState(initial = null)
+          val photosDir = remember(isbn) { File(context.filesDir, "photos/$isbn") }
+          val count = remember(isbn) {
+            photosDir.listFiles()?.count { it.isFile } ?: 0
+          }
+
+          Button(
+            onClick = { onResume(isbn) },
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            val t = title.value
+            val label = if (t.isNullOrBlank()) isbn else "$isbn — $t"
+            Text("$label ($count photos)")
+          }
+        }
+
+        Button(
+          onClick = { reload() },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Refresh")
+        }
+      }
+
+      Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
+    }
   }
 }
 
