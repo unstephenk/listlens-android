@@ -43,9 +43,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Alignment
@@ -69,6 +71,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -83,8 +86,12 @@ import java.util.concurrent.atomic.AtomicInteger
 @Composable
 fun CategoryScreen(
   onBooks: () -> Unit,
+  onRecentIsbn: (String) -> Unit,
   onEbaySignIn: () -> Unit,
 ) {
+  val context = LocalContext.current
+  val recent = Prefs.recentIsbnsFlow(context).collectAsState(initial = emptyList())
+
   Column(
     modifier = Modifier.fillMaxSize().padding(16.dp),
     verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -94,6 +101,18 @@ fun CategoryScreen(
 
     Button(onClick = onBooks, modifier = Modifier.fillMaxWidth()) {
       Text("Books")
+    }
+
+    if (recent.value.isNotEmpty()) {
+      Text("Recent")
+      recent.value.take(5).forEach { isbn ->
+        Button(
+          onClick = { onRecentIsbn(isbn) },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text(isbn)
+        }
+      }
     }
 
     Spacer(Modifier.weight(1f))
@@ -504,6 +523,9 @@ fun ConfirmBookScreen(
   onBack: () -> Unit,
   onAccept: (String) -> Unit,
 ) {
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+
   val isbnText = remember { mutableStateOf(initialIsbn) }
   val normalized = remember(isbnText.value) { Isbn.extractIsbn13(isbnText.value) }
   val effectiveIsbn = normalized ?: ""
@@ -585,8 +607,10 @@ fun ConfirmBookScreen(
         onLeft = onBack,
         onRight = {
           val isbn13 = normalized
-          if (isbn13 != null && Isbn.isValidIsbn13(isbn13)) onAccept(isbn13)
-          else lookupError.value = "Invalid ISBN"
+          if (isbn13 != null && Isbn.isValidIsbn13(isbn13)) {
+            scope.launch { runCatching { Prefs.addRecentIsbn(context, isbn13) } }
+            onAccept(isbn13)
+          } else lookupError.value = "Invalid ISBN"
         },
       )
 

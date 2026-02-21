@@ -38,6 +38,7 @@ fun ListLensApp() {
         composable("category") {
           CategoryScreen(
             onBooks = { nav.navigate("scan/books") },
+            onRecentIsbn = { isbn -> nav.navigate("confirm/$isbn") },
             onEbaySignIn = { nav.navigate("ebay") },
           )
         }
