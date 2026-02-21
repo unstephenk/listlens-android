@@ -3,6 +3,8 @@ package com.listlens.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Size
@@ -202,6 +204,7 @@ fun DraftsScreen(
   val drafts = remember { mutableStateOf<List<DraftRow>>(emptyList()) }
   val error = remember { mutableStateOf<String?>(null) }
   val exportAllStatus = remember { mutableStateOf<String?>(null) }
+  val filter = remember { mutableStateOf("") }
 
   val confirmDelete = remember { mutableStateOf<String?>(null) }
   val confirmDeleteAll = remember { mutableStateOf(false) }
@@ -239,12 +242,26 @@ fun DraftsScreen(
       error.value?.let { Text("Error: $it") }
       exportAllStatus.value?.let { Text(it) }
 
+      OutlinedTextField(
+        value = filter.value,
+        onValueChange = { filter.value = it },
+        label = { Text("Filter (ISBN/title)") },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+      )
+
       if (drafts.value.isEmpty()) {
         Text("No drafts yet.")
       } else {
         val df = remember { SimpleDateFormat("MMM d, h:mm a", Locale.US) }
 
-        drafts.value.forEach { row ->
+        drafts.value
+          .filter { row ->
+            val q = filter.value.trim()
+            if (q.isBlank()) true
+            else row.isbn.contains(q, ignoreCase = true)
+          }
+          .forEach { row ->
           val title = Prefs.bookTitleFlow(context, row.isbn).collectAsState(initial = null)
           val updatedAt = Prefs.updatedAtFlow(context, row.isbn).collectAsState(initial = null)
 
@@ -330,15 +347,18 @@ fun DraftsScreen(
               val isbns = drafts.value.map { it.isbn }
               val cacheOut = File(context.cacheDir, "exports/batch/${System.currentTimeMillis()}").apply { mkdirs() }
 
-              val zipFiles = withContext(Dispatchers.IO) {
-                isbns.mapNotNull { isbn ->
-                  runCatching {
-                    val photosDir = File(photosRoot, isbn)
-                    if (!photosDir.exists()) return@runCatching null
-                    val files = photosDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name } ?: emptyList()
-                    if (files.isEmpty()) return@runCatching null
+              val batchZip = withContext(Dispatchers.IO) {
+                runCatching {
+                  val batchDir = File(cacheOut, "batch").apply { mkdirs() }
 
-                    val exportDir = File(cacheOut, isbn).apply { mkdirs() }
+                  var included = 0
+                  isbns.forEach { isbn ->
+                    val photosDir = File(photosRoot, isbn)
+                    if (!photosDir.exists()) return@forEach
+                    val files = photosDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name } ?: emptyList()
+                    if (files.isEmpty()) return@forEach
+
+                    val exportDir = File(batchDir, isbn).apply { mkdirs() }
                     val copied = files.mapIndexed { index, src ->
                       val ext = src.extension.ifBlank { "jpg" }
                       val dst = File(exportDir, String.format(Locale.US, "photo_%02d.%s", index + 1, ext))
@@ -364,31 +384,35 @@ fun DraftsScreen(
                     File(exportDir, "listing.json").writeText(json.toString(2))
                     File(exportDir, "listing.txt").writeText(listingText(isbn = isbn, title = title, condition = cond, notes = notes) + "\n")
 
-                    val zip = File(cacheOut, "listlens_${isbn}_${System.currentTimeMillis()}.zip")
-                    zipDirectoryToFile(exportDir, zip)
-                    zip
-                  }.getOrNull()
-                }
+                    included++
+                  }
+
+                  if (included == 0) return@runCatching null
+
+                  val zip = File(cacheOut, "listlens_batch_${System.currentTimeMillis()}.zip")
+                  zipDirectoryToFile(batchDir, zip)
+                  zip
+                }.getOrNull()
               }
 
-              if (zipFiles.isEmpty()) {
+              if (batchZip == null) {
                 exportAllStatus.value = "No drafts with photos to export."
                 return@launch
               }
 
-              val uris = zipFiles.map { FileProvider.getUriForFile(context, authority, it) }
-              val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+              val uri = FileProvider.getUriForFile(context, authority, batchZip)
+              val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "application/zip"
-                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+                putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
               }
-              runCatching { context.startActivity(Intent.createChooser(intent, "Share draft ZIPs")) }
-              exportAllStatus.value = "Export ready (${zipFiles.size} ZIPs)."
+              runCatching { context.startActivity(Intent.createChooser(intent, "Share batch ZIP")) }
+              exportAllStatus.value = "Export ready (batch ZIP)."
             }
           },
           modifier = Modifier.fillMaxWidth(),
         ) {
-          Text("Export all drafts")
+          Text("Export all drafts (batch ZIP)")
         }
 
         Button(
@@ -1605,6 +1629,25 @@ fun PackageScreen(
         },
       ) {
         Text("Share listing text")
+      }
+
+      Button(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = {
+          val book = (state.value as? BookLookupState.Found)?.book
+          val text = listingText(
+            isbn = isbn,
+            title = book?.title,
+            condition = condition.value,
+            notes = notes.value,
+          )
+
+          val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
+          cm.setPrimaryClip(ClipData.newPlainText("ListLens listing", text))
+          lastExportPath.value = "Copied listing text to clipboard"
+        },
+      ) {
+        Text("Copy listing text")
       }
 
       RowButtons(
