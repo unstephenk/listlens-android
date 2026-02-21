@@ -8,5 +8,8 @@
 .idea/
 .gradle/
 
+# Build outputs
+app/build/
+
 # Machine-specific
 local.properties
