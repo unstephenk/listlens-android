@@ -57,6 +57,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -95,12 +97,27 @@ fun CategoryScreen(
   onEbaySignIn: () -> Unit,
 ) {
   val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
+  val scope = rememberCoroutineScope()
   val recent = Prefs.recentIsbnsFlow(context).collectAsState(initial = emptyList())
 
   val draftCount = remember { mutableStateOf(0) }
-  LaunchedEffect(Unit) {
+
+  fun reloadDraftCount() {
     val photosRoot = File(context.filesDir, "photos")
     draftCount.value = photosRoot.listFiles()?.count { it.isDirectory } ?: 0
+  }
+
+  LaunchedEffect(Unit) {
+    reloadDraftCount()
+  }
+
+  DisposableEffect(lifecycleOwner) {
+    val obs = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) reloadDraftCount()
+    }
+    lifecycleOwner.lifecycle.addObserver(obs)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
   }
 
   Column(
@@ -125,6 +142,16 @@ fun CategoryScreen(
           val t = title.value
           if (t.isNullOrBlank()) Text(isbn) else Text("$isbn — $t")
         }
+      }
+
+      Button(
+        onClick = {
+          // Best-effort clear; safe if it fails.
+          scope.launch { runCatching { Prefs.clearRecentIsbns(context) } }
+        },
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Text("Clear recent")
       }
     }
 
@@ -163,6 +190,7 @@ fun DraftsScreen(
   val error = remember { mutableStateOf<String?>(null) }
 
   val confirmDelete = remember { mutableStateOf<String?>(null) }
+  val confirmDeleteAll = remember { mutableStateOf(false) }
 
   fun reload() {
     val photosRoot = File(context.filesDir, "photos")
@@ -229,6 +257,13 @@ fun DraftsScreen(
         ) {
           Text("Refresh")
         }
+
+        Button(
+          onClick = { confirmDeleteAll.value = true },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Delete all drafts")
+        }
       }
 
       Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
@@ -254,6 +289,30 @@ fun DraftsScreen(
       },
       dismissButton = {
         Button(onClick = { confirmDelete.value = null }) { Text("Cancel") }
+      },
+    )
+  }
+
+  if (confirmDeleteAll.value) {
+    AlertDialog(
+      onDismissRequest = { confirmDeleteAll.value = false },
+      title = { Text("Delete ALL drafts?") },
+      text = { Text("This deletes all stored draft photos. This cannot be undone.") },
+      confirmButton = {
+        Button(
+          onClick = {
+            runCatching {
+              val dir = File(context.filesDir, "photos")
+              dir.deleteRecursively()
+              dir.mkdirs()
+              reload()
+            }
+            confirmDeleteAll.value = false
+          },
+        ) { Text("Delete all") }
+      },
+      dismissButton = {
+        Button(onClick = { confirmDeleteAll.value = false }) { Text("Cancel") }
       },
     )
   }

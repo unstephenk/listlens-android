@@ -70,4 +70,11 @@ object Prefs {
       prefs[titleKey(isbn13)] = title
     }
   }
+
+  suspend fun clearRecentIsbns(context: Context) {
+    context.dataStore.edit { prefs ->
+      prefs[recentIsbnsKey] = ""
+    }
+  }
 }
+
