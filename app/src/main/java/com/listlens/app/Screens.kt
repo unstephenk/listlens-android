@@ -748,7 +748,7 @@ fun ConfirmBookScreen(
 
     state.value = BookLookupState.Loading
     state.value = try {
-      val book = OpenLibrary.lookupByIsbn(effectiveIsbn)
+      val book = BookMetadata.lookupByIsbn(effectiveIsbn)
       if (book == null) BookLookupState.NotFound else BookLookupState.Found(book)
     } catch (e: Exception) {
       lookupError.value = e.message
@@ -764,7 +764,7 @@ fun ConfirmBookScreen(
       verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
       val coverUrl = remember(effectiveIsbn) {
-        if (effectiveIsbn.isBlank()) null else OpenLibrary.coverUrl(effectiveIsbn, size = "L")
+        if (effectiveIsbn.isBlank()) null else BookMetadata.coverUrl(effectiveIsbn, size = "L")
       }
 
       coverUrl?.let {
@@ -901,8 +901,17 @@ private fun zipDirectoryToFile(dir: File, zipFile: File) {
   }
 }
 
-private object OpenLibrary {
-  suspend fun lookupByIsbn(isbn13: String): BookInfo? = withContext(Dispatchers.IO) {
+private object BookMetadata {
+  suspend fun lookupByIsbn(isbn13: String): BookInfo? {
+    // Primary: Open Library (fast, free)
+    val open = runCatching { openLibraryLookup(isbn13) }.getOrNull()
+    if (open != null) return open
+
+    // Fallback: Google Books (no API key required for basic isbn search)
+    return runCatching { googleBooksLookup(isbn13) }.getOrNull()
+  }
+
+  private suspend fun openLibraryLookup(isbn13: String): BookInfo? = withContext(Dispatchers.IO) {
     val url = URL("https://openlibrary.org/isbn/$isbn13.json")
     val conn = (url.openConnection() as HttpURLConnection).apply {
       connectTimeout = 6000
@@ -935,6 +944,42 @@ private object OpenLibrary {
       BookInfo(
         title = title,
         publishDate = publishDate,
+        publishers = publishers,
+      )
+    } finally {
+      conn.disconnect()
+    }
+  }
+
+  private suspend fun googleBooksLookup(isbn13: String): BookInfo? = withContext(Dispatchers.IO) {
+    val url = URL("https://www.googleapis.com/books/v1/volumes?q=isbn:$isbn13")
+    val conn = (url.openConnection() as HttpURLConnection).apply {
+      connectTimeout = 7000
+      readTimeout = 7000
+      requestMethod = "GET"
+      setRequestProperty("Accept", "application/json")
+      setRequestProperty("User-Agent", "ListLens/0.0.1")
+    }
+
+    try {
+      val code = conn.responseCode
+      if (code !in 200..299) return@withContext null
+
+      val body = conn.inputStream.bufferedReader().use { it.readText() }
+      val json = JSONObject(body)
+      val items = json.optJSONArray("items") ?: return@withContext null
+      if (items.length() == 0) return@withContext null
+
+      val first = items.optJSONObject(0) ?: return@withContext null
+      val vol = first.optJSONObject("volumeInfo") ?: return@withContext null
+
+      val title = vol.optString("title").ifBlank { "(unknown title)" }
+      val publishedDate = vol.optString("publishedDate").ifBlank { null }
+      val publishers = vol.optString("publisher").ifBlank { null }?.let { listOf(it) }
+
+      BookInfo(
+        title = title,
+        publishDate = publishedDate,
         publishers = publishers,
       )
     } finally {
@@ -1190,7 +1235,7 @@ fun PackageScreen(
   LaunchedEffect(isbn) {
     state.value = BookLookupState.Loading
     state.value = try {
-      val book = OpenLibrary.lookupByIsbn(isbn)
+      val book = BookMetadata.lookupByIsbn(isbn)
       if (book == null) BookLookupState.NotFound else BookLookupState.Found(book)
     } catch (e: Exception) {
       BookLookupState.Error(e.message ?: "Lookup failed")
@@ -1335,7 +1380,7 @@ fun PackageScreen(
                   if (notes.value.isNotBlank()) appendLine("Notes: ${notes.value}")
                 }.trim(),
               )
-              put("coverUrl", OpenLibrary.coverUrl(isbn, size = "L"))
+              put("coverUrl", BookMetadata.coverUrl(isbn, size = "L"))
               put(
                 "photos",
                 JSONArray(copied.map { it.name }),
