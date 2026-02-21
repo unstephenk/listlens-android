@@ -1027,6 +1027,7 @@ fun PhotosScreen(
   val photos = remember { mutableStateOf<List<File>>(emptyList()) }
   val errorText = remember { mutableStateOf<String?>(null) }
   val warningText = remember { mutableStateOf<String?>(null) }
+  val showLastWarning = remember { mutableStateOf(false) }
 
   fun reloadPhotos() {
     // Load any existing photos for this ISBN.
@@ -1137,6 +1138,7 @@ fun PhotosScreen(
               }
               errorText.value = null
               warningText.value = analyzePhotoForWarnings(file)
+              showLastWarning.value = warningText.value != null
             },
             onError = { msg ->
               errorText.value = msg
@@ -1151,7 +1153,12 @@ fun PhotosScreen(
       ) {
         Text("Photos: ${photos.value.size}/5")
         errorText.value?.let { Text("Error: $it") }
-        warningText.value?.let { Text(it) }
+        warningText.value?.let { warn ->
+          Button(
+            onClick = { showLastWarning.value = true },
+            modifier = Modifier.fillMaxWidth(),
+          ) { Text("View last photo warning") }
+        }
 
         if (photos.value.isNotEmpty()) {
           LazyVerticalGrid(
@@ -1222,6 +1229,17 @@ fun PhotosScreen(
           enabled = photos.value.isNotEmpty(),
         ) {
           Text("Continue")
+        }
+
+        if (showLastWarning.value && warningText.value != null) {
+          AlertDialog(
+            onDismissRequest = { showLastWarning.value = false },
+            title = { Text("Photo warning") },
+            text = { Text(warningText.value ?: "") },
+            confirmButton = {
+              Button(onClick = { showLastWarning.value = false }) { Text("OK") }
+            },
+          )
         }
 
         Button(
