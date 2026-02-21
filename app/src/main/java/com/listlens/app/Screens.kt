@@ -68,6 +68,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -910,6 +911,26 @@ fun PackageScreen(
   val condition = remember { mutableStateOf(conditionOptions.first()) }
   val conditionMenuOpen = remember { mutableStateOf(false) }
   val notes = remember { mutableStateOf("") }
+
+  // Persist condition + notes per ISBN so you can bounce around screens without losing context.
+  LaunchedEffect(isbn) {
+    val saved = runCatching { Prefs.conditionFlow(context, isbn).first() }.getOrNull()
+    if (!saved.isNullOrBlank() && saved in conditionOptions) condition.value = saved
+  }
+  LaunchedEffect(isbn) {
+    val saved = runCatching { Prefs.notesFlow(context, isbn).first() }.getOrNull()
+    if (saved != null) notes.value = saved
+  }
+
+  // Save changes (light debounce).
+  LaunchedEffect(condition.value) {
+    delay(250)
+    runCatching { Prefs.setCondition(context, isbn, condition.value) }
+  }
+  LaunchedEffect(notes.value) {
+    delay(350)
+    runCatching { Prefs.setNotes(context, isbn, notes.value) }
+  }
 
   val lastExportPath = remember { mutableStateOf<String?>(null) }
   val error = remember { mutableStateOf<String?>(null) }
