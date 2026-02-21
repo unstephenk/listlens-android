@@ -103,6 +103,14 @@ fun ListLensApp() {
             isbn = isbn,
             onScanNext = { nav.navigate("scan/books") },
             onDrafts = { nav.navigate("drafts") },
+            onDeleteDraft = {
+              // Delete stored photos for this ISBN then go home.
+              val ctx = androidx.compose.ui.platform.LocalContext.current
+              runCatching {
+                java.io.File(ctx.filesDir, "photos/$isbn").deleteRecursively()
+              }
+              nav.popBackStack("category", inclusive = false)
+            },
             onHome = { nav.popBackStack("category", inclusive = false) },
           )
         }

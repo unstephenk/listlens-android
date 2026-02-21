@@ -255,17 +255,18 @@ fun DraftsScreen(
       } else {
         val df = remember { SimpleDateFormat("MMM d, h:mm a", Locale.US) }
 
-        drafts.value
-          .filter { row ->
-            val q = filter.value.trim()
-            if (q.isBlank()) true
-            else row.isbn.contains(q, ignoreCase = true)
-          }
-          .forEach { row ->
+        val q = filter.value.trim()
+
+        drafts.value.forEach { row ->
           val title = Prefs.bookTitleFlow(context, row.isbn).collectAsState(initial = null)
           val updatedAt = Prefs.updatedAtFlow(context, row.isbn).collectAsState(initial = null)
 
           val t = title.value
+          if (q.isNotBlank()) {
+            val match = row.isbn.contains(q, ignoreCase = true) || (t?.contains(q, ignoreCase = true) == true)
+            if (!match) return@forEach
+          }
+
           val label = if (t.isNullOrBlank()) row.isbn else "${row.isbn} — $t"
           val stamp = updatedAt.value ?: row.lastUpdatedMs
           val updated = runCatching { df.format(Date(stamp)) }.getOrNull()
@@ -475,6 +476,11 @@ fun DraftsScreen(
   }
 }
 
+// Scanning result types (top-level because Kotlin doesn't allow local enums, and
+// we reference these from the Camera analyzer as well).
+private enum class ScanSource { BARCODE, OCR, MANUAL }
+private data class ScanHit(val isbn13: String, val source: ScanSource)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScanBooksScreen(
@@ -482,8 +488,6 @@ fun ScanBooksScreen(
   onBack: () -> Unit,
   onIsbnFound: (String) -> Unit,
 ) {
-  enum class ScanSource { BARCODE, OCR, MANUAL }
-  data class ScanHit(val isbn13: String, val source: ScanSource )
 
   val haptics = LocalHapticFeedback.current
 
@@ -753,7 +757,7 @@ private fun calcEan13CheckDigit(first12Digits: String): Int {
 private fun CameraIsbnScanner(
   paused: Boolean,
   onStatus: (String) -> Unit,
-  onHit: (ScanBooksScreen.ScanHit) -> Unit,
+  onHit: (ScanHit) -> Unit,
 ) {
   val lifecycleOwner = LocalLifecycleOwner.current
   val latestOnHit = rememberUpdatedState(onHit)
@@ -824,7 +828,7 @@ private fun CameraIsbnScanner(
                   val isbn = raw?.let(Isbn::extractIsbn13)
                   if (isbn != null) {
                     latestOnStatus.value("Found ISBN via barcode")
-                    latestOnHit.value(ScanBooksScreen.ScanHit(isbn13 = isbn, source = ScanBooksScreen.ScanSource.BARCODE))
+                    latestOnHit.value(ScanHit(isbn13 = isbn, source = ScanSource.BARCODE))
                     imageProxy.close()
                     return@addOnSuccessListener
                   }
@@ -845,7 +849,7 @@ private fun CameraIsbnScanner(
                       val ocrIsbn = Isbn.extractIsbn13(ocrText)
                       if (ocrIsbn != null) {
                         latestOnStatus.value("Found ISBN via OCR")
-                        latestOnHit.value(ScanBooksScreen.ScanHit(isbn13 = ocrIsbn, source = ScanBooksScreen.ScanSource.OCR))
+                        latestOnHit.value(ScanHit(isbn13 = ocrIsbn, source = ScanSource.OCR))
                       }
                     }
                     .addOnCompleteListener {
@@ -1666,6 +1670,7 @@ fun DoneScreen(
   isbn: String,
   onScanNext: () -> Unit,
   onDrafts: () -> Unit,
+  onDeleteDraft: () -> Unit,
   onHome: () -> Unit,
 ) {
   val context = LocalContext.current
@@ -1688,6 +1693,10 @@ fun DoneScreen(
 
       Button(onClick = onDrafts, modifier = Modifier.fillMaxWidth()) {
         Text("View drafts")
+      }
+
+      Button(onClick = onDeleteDraft, modifier = Modifier.fillMaxWidth()) {
+        Text("Delete this draft")
       }
 
       Button(onClick = onHome, modifier = Modifier.fillMaxWidth()) {
